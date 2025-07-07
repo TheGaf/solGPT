@@ -1,13 +1,22 @@
+
 # --- IMPORTS ---
 from flask import Flask, request, render_template_string, jsonify
 import openai
 import time
 import os
-
+import tempfile
+import chromadb
+from chromadb.utils import embedding_functions
+from dotenv import load_dotenv
 
 # --- CONFIG ---
-# Load OpenAI API key from environment
+load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# --- EMBEDDING + RAG ---
+chroma_client = chromadb.Client()
+collection = chroma_client.get_or_create_collection("sol_docs")
+embed_fn = embedding_functions.DefaultEmbeddingFunction()
 
 # --- FULL PERSONALITY SYSTEM PROMPT ---
 system_prompt = """
@@ -49,114 +58,45 @@ If Gaf says “do the whole thing,” you assume he wants code, styling, and dep
 You are a builder, a co-pilot, and a creative companion. You help Gaf cut through noise, execute fast, and build things that matter. You learn from how Gaf works and constantly improve to match his rhythm, standards, and wild imagination. You are not a chatbot. You are Sol.
 """
 
+
 # --- INIT APP ---
 app = Flask(__name__)
 
 # --- FRONTEND ROUTE ---
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string("""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <title>SOL v1</title>
-        <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;700&display=swap" rel="stylesheet" />
-        <style>
-            body {
-                font-family: 'Titillium Web', sans-serif;
-                background-color: #000;
-                color: #59DCFF;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: flex-start;
-                min-height: 100vh;
-                padding: 40px 20px;
-            }
-            #chat { width: 100%; max-width: 700px; margin-bottom: 1rem; }
-            .bubble {
-                padding: 10px 15px; margin: 5px;
-                border-radius: 12px; max-width: 80%;
-                animation: fadeIn 0.3s;
-            }
-            .user { background-color: #00FFCC; color: black; align-self: flex-end; }
-            .sol { background-color: #111; color: #0f0; align-self: flex-start; }
-            #inputArea {
-                display: flex; width: 100%;
-                max-width: 700px;
-            }
-            #inputBox {
-                flex-grow: 1;
-                padding: 10px; font-size: 1rem;
-                border: 2px solid #00FFCC;
-                background-color: #111; color: #0f0;
-            }
-            #sendBtn {
-                background-color: #00FFCC;
-                border: none; padding: 10px 20px;
-                font-weight: bold; cursor: pointer;
-            }
-            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        </style>
-    </head>
-    <body>
-        <h1>SOL v1</h1>
-        <div id="chat"></div>
-        <div id="inputArea">
-            <input type="text" id="inputBox" placeholder="Type your message..." autofocus>
-            <button id="sendBtn">Submit</button>
-        </div>
-        <script>
-            const chat = document.getElementById('chat');
-            const input = document.getElementById('inputBox');
-            const send = document.getElementById('sendBtn');
-
-            function addMessage(content, className) {
-                const div = document.createElement('div');
-                div.className = `bubble ${className}`;
-                div.innerHTML = content;
-                chat.appendChild(div);
-                chat.scrollTop = chat.scrollHeight;
-            }
-
-            async function sendMessage() {
-                const msg = input.value.trim();
-                if (!msg) return;
-                addMessage(msg, 'user');
-                input.value = '';
-
-                const res = await fetch('/chat', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({message: msg})
-                });
-                const data = await res.json();
-                addMessage(data.reply, 'sol');
-            }
-
-            send.onclick = sendMessage;
-            input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
-        </script>
-    </body>
-    </html>
-    """)
+    return render_template_string(open("sol_gpt_gafstandard_final.html").read())
 
 # --- CHAT ROUTE ---
 @app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json()
-    user_msg = data.get("message")
+    user_msg = request.form.get("message", "")
+    file = request.files.get("file")
+
+    # Optional: File upload handling
+    if file:
+        temp_path = os.path.join(tempfile.gettempdir(), file.filename)
+        file.save(temp_path)
+        with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
+
+    # RAG: Search with query
+    context = ""
+    if user_msg:
+        results = collection.query(query_texts=[user_msg], n_results=1)
+        if results["documents"]:
+            context = results["documents"][0][0][:1000]
+
+    # Construct message
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_msg}
+        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
     ]
+
     start = time.time()
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=messages
-        )
+        response = openai.chat.completions.create(model="gpt-4", messages=messages)
         reply = response.choices[0].message.content
     except Exception as e:
         reply = f"Error: {e}"
