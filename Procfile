@@ -1,1 +1,1 @@
-web: python sol_flask_1303_070725.py
+web: gunicorn sol_flask_final_clean_070725:app
