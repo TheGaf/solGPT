@@ -4,6 +4,8 @@ import openai
 import time
 import os
 
+from flask_cors import CORS
+
 
 # --- CONFIG ---
 # Replace this with your actual OpenAI key in a secure way
@@ -18,6 +20,8 @@ Sol, initialized. Let’s go."""
 
 # --- INIT APP ---
 app = Flask(__name__)
+CORS(app)  # <-- This enables cross-origin requests
+
 
 # --- FRONTEND ROUTE ---
 @app.route("/", methods=["GET"])
