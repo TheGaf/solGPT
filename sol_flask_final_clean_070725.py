@@ -65,7 +65,7 @@ app = Flask(__name__)
 # --- FRONTEND ROUTE ---
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(open("sol_gpt_gafstandard_final.html").read())
+    return render_template_string(open("sol.html").read())
 
 # --- CHAT ROUTE ---
 @app.route("/chat", methods=["POST"])
