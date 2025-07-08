@@ -110,9 +110,10 @@ def chat():
             context = results["documents"][0][0][:1000]
         print("ChromaDB Results:", results)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{user_msg}
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
+]
 
 Relevant Info:
 {context}"}
