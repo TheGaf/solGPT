@@ -152,12 +152,12 @@ def chat():
     start = time.time()
     try:
         response = client.chat.completions.create(
-   		model="mixtral-8x7b-32768",
-    		messages=messages,
-    		temperature=0.7,
-    		max_tokens=1024
-	)
-	reply_raw = response.choices[0].message.content
+            model="mixtral-8x7b-32768",
+            messages=messages,
+            temperature=0.7,
+            max_tokens=1024
+        )
+        reply_raw = response.choices[0].message.content
         reply_html = markdown(reply_raw, extensions=['fenced_code', 'tables'])  # GafComment: This was incorrectly placed inside the try block before
     except Exception as e:
         reply_html = f"Error: {e}"
