@@ -1,4 +1,3 @@
-
 # --- IMPORTS ---
 from flask import Flask, request, jsonify, render_template_string
 import openai
@@ -8,6 +7,7 @@ import tempfile
 import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
+import requests  # GafComment: used to fetch sol.html remotely
 
 # --- LOAD ENV ---
 load_dotenv()
@@ -64,7 +64,13 @@ You are a builder, a co-pilot, and a creative companion. You help Gaf cut throug
 # --- ROUTES ---
 @app.route("/", methods=["GET"])
 def index():
-    return render_template_string(open("sol.html").read())
+    try:
+        # GafComment: fetch sol.html remotely to avoid local file issues on Render
+        html = requests.get("https://gaf.nyc/sol.html")
+        html.raise_for_status()
+        return render_template_string(html.text)
+    except Exception as e:
+        return f"Error loading sol.html: {e}", 500
 
 @app.route("/chat", methods=["POST"])
 def chat():
