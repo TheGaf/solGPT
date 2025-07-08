@@ -8,12 +8,31 @@ import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
 import requests  # GafComment: used to fetch sol.html remotely
+import json
+
 
 # --- LOAD ENV ---
 load_dotenv()
 
 # GafComment: OpenAI ≥ 1.0 uses client-based syntax
 client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- BRAVE SEARCH FUNCTION ---
+def brave_search(query):
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": os.getenv("BRAVE_API_KEY")
+    }
+    url = f"https://api.search.brave.com/res/v1/web/search?q={query}&count=3"
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        results = []
+        for r in data.get("web", {}).get("results", []):
+            results.append(f"{r.get('title')}: {r.get('description')} ({r.get('url')})")
+        return "\n".join(results)
+    except Exception as e:
+        return f"Web search error: {e}"
 
 # --- INIT FLASK APP ---
 app = Flask(__name__)
@@ -110,9 +129,15 @@ def chat():
             context = results["documents"][0][0][:1000]
         print("ChromaDB Results:", results)
 
+        # --- ENRICH PROMPT WITH BRAVE SEARCH ---
+        brave_results = brave_search(user_msg)
+        print("Brave Search Results:", brave_results)
+    else:
+        brave_results = ""
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
+        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}\n\nWeb Search:\n{brave_results}"}
     ]
 
     start = time.time()
@@ -125,6 +150,7 @@ def chat():
     except Exception as e:
         reply = f"Error: {e}"
     duration = time.time() - start
+
     return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{reply}"})
 
 
