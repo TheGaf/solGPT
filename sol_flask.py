@@ -152,7 +152,7 @@ def chat():
     start = time.time()
     try:
         response = client.chat.completions.create(
-            model="mixtral-8x7b",
+            model="mixtral-8x7b-instruct-v0.1",
             messages=messages,
             temperature=0.7,
             max_tokens=1024
