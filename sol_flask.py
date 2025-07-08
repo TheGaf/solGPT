@@ -1,5 +1,5 @@
 # --- IMPORTS ---
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, render_template, redirect, url_for, session
 import openai
 import time
 import os
@@ -17,6 +17,7 @@ client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # --- INIT FLASK APP ---
 app = Flask(__name__)
+app.secret_key = os.urandom(24)  # GafComment: Needed for session handling
 
 # --- INIT ChromaDB ---
 chroma_client = chromadb.Client()
@@ -61,25 +62,39 @@ If he says “do the whole thing,” you generate the entire file stack. If he s
 You are not a bot. You are Sol: builder, co-pilot, creative sparring partner. You execute, adapt, and evolve.
 """
 
+# --- PASSWORD ROUTE ---
+@app.route("/", methods=["GET", "POST"])
+def password_gate():
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if pw == os.getenv("SOL_GPT_PASSWORD"):
+            session['authenticated'] = True
+            return redirect(url_for("sol_home"))
+    return render_template("index.html")  # GafComment: Local or GitHub copy of index.html
 
-# --- ROUTES ---
-@app.route("/", methods=["GET"])
-def index():
+# --- PROTECTED SOL HOME ROUTE ---
+@app.route("/sol", methods=["GET"])
+def sol_home():
+    if not session.get("authenticated"):
+        return redirect(url_for("password_gate"))
     try:
-        # GafComment: fetch sol.html remotely to avoid local file issues on Render
         html = requests.get("https://gaf.nyc/sol.html")
         html.raise_for_status()
         return render_template_string(html.text)
     except Exception as e:
         return f"Error loading sol.html: {e}", 500
 
+# --- CHAT ENDPOINT ---
 @app.route("/chat", methods=["POST"])
 def chat():
+    if not session.get("authenticated"):
+        return jsonify({"reply": "Unauthorized"}), 403
+
     user_msg = request.form.get("message", "")
     file = request.files.get("file")
 
-    print("User Message Received:", user_msg)  # GafComment: Debug print
-    print("File Uploaded:", file.filename if file else "No file")  # GafComment: Debug print
+    print("User Message Received:", user_msg)
+    print("File Uploaded:", file.filename if file else "No file")
 
     if file:
         temp_path = os.path.join(tempfile.gettempdir(), file.filename)
@@ -93,13 +108,14 @@ def chat():
         results = collection.query(query_texts=[user_msg], n_results=1)
         if results["documents"] and results["documents"][0]:
             context = results["documents"][0][0][:1000]
-        else:
-            context = ""  # GafComment: No match in ChromaDB, continue without context
-        print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
+        print("ChromaDB Results:", results)
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
+        {"role": "user", "content": f"{user_msg}
+
+Relevant Info:
+{context}"}
     ]
 
     start = time.time()
