@@ -1,0 +1,39 @@
+
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1.0'/>
+  <title>The Gaf's URL Shortener</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <video autoplay loop muted playsinline id="bg-video" preload="auto">
+    <source src="https://gaf.nyc/shorten.mp4" type="video/mp4">
+  </video>
+  <div class='container'>
+    <img src='https://gaf.nyc/BGtitle.svg' alt='BG Logo' class='logo' />
+    <h2>SOL GPT</h2>
+    <div class='section'>
+      <h3>🔐 What's the Password?</h3>
+      <form method='POST'>
+        <input type='password' name='password' placeholder='ENTER PASSWORD' required>
+        <input type='submit' value='SUBMIT'>
+              </form>
+    </div>
+  </div>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const sections = document.querySelectorAll('.section');
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      }, { threshold: 0.2 });
+      sections.forEach(section => observer.observe(section));
+    });
+  </script>
+</body>
+</html>
