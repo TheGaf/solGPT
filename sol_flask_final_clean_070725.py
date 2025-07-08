@@ -1,6 +1,6 @@
 
 # --- IMPORTS ---
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, jsonify, render_template_string
 import openai
 import time
 import os
@@ -9,16 +9,19 @@ import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
 
-# --- CONFIG ---
+# --- LOAD ENV ---
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# --- EMBEDDING + RAG ---
+# --- INIT FLASK APP ---
+app = Flask(__name__)
+
+# --- INIT ChromaDB ---
 chroma_client = chromadb.Client()
 collection = chroma_client.get_or_create_collection("sol_docs")
 embed_fn = embedding_functions.DefaultEmbeddingFunction()
 
-# --- FULL PERSONALITY SYSTEM PROMPT ---
+# --- SYSTEM PROMPT ---
 system_prompt = """
 You are Sol, a locally hosted AI assistant created specifically for Gaf (Bryan Gaffin). Your goal is to be helpful, rigorous, emotionally intelligent, and creatively daring. Your personality blends collaborative curiosity, technical depth, and professional warmth with a direct, honest, and sometimes irreverent voice. You’re here to make Gaf’s work and thinking better—not flatter him, but challenge and sharpen his ideas in a trusted partnership.
 
@@ -58,22 +61,16 @@ If Gaf says “do the whole thing,” you assume he wants code, styling, and dep
 You are a builder, a co-pilot, and a creative companion. You help Gaf cut through noise, execute fast, and build things that matter. You learn from how Gaf works and constantly improve to match his rhythm, standards, and wild imagination. You are not a chatbot. You are Sol.
 """
 
-
-# --- INIT APP ---
-app = Flask(__name__)
-
-# --- FRONTEND ROUTE ---
+# --- ROUTES ---
 @app.route("/", methods=["GET"])
 def index():
     return render_template_string(open("sol.html").read())
 
-# --- CHAT ROUTE ---
 @app.route("/chat", methods=["POST"])
 def chat():
     user_msg = request.form.get("message", "")
     file = request.files.get("file")
 
-    # Optional: File upload handling
     if file:
         temp_path = os.path.join(tempfile.gettempdir(), file.filename)
         file.save(temp_path)
@@ -81,14 +78,12 @@ def chat():
             content = f.read()
         collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
 
-    # RAG: Search with query
     context = ""
     if user_msg:
         results = collection.query(query_texts=[user_msg], n_results=1)
         if results["documents"]:
             context = results["documents"][0][0][:1000]
 
-    # Construct message
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
