@@ -4,3 +4,4 @@ openai
 gunicorn
 chromadb
 python-dotenv
+markdown
