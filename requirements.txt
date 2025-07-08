@@ -1,6 +1,6 @@
 flask
 flask_cors
-openai
+groq
 gunicorn
 chromadb
 python-dotenv
