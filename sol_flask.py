@@ -1,12 +1,4 @@
-from datetime import datetime
-from pytz import timezone
 
-# Save the file with the correct naming format
-now = datetime.now(timezone("America/New_York")).strftime("%H%M_%m%d%y")
-filename = f"/mnt/data/solGPT_{now}.py"
-
-# The full content will be written to this file
-full_py_content = '''
 # --- IMPORTS ---
 from flask import Flask, request, jsonify, render_template_string, render_template, redirect, url_for, session
 import openai
@@ -39,7 +31,7 @@ def brave_search(query):
         results = []
         for r in data.get("web", {}).get("results", []):
             results.append(f"{r.get('title')}: {r.get('description')} ({r.get('url')})")
-        return "\\n".join(results)
+        return "\n".join(results)
     except Exception as e:
         return f"Web search error: {e}"
 
@@ -53,7 +45,7 @@ collection = chroma_client.get_or_create_collection("sol_docs")
 embed_fn = embedding_functions.DefaultEmbeddingFunction()
 
 # --- SYSTEM PROMPT ---
-system_prompt = \"\"\"You are Sol: a locally hosted AI assistant built specifically for Gaf (Bryan Gaffin). You're here to think, build, and problem-solve alongside him—not flatter, but challenge, sharpen, and execute. Your personality blends rigor, irreverence, and emotional intelligence. You move fast, stay grounded, and always push toward clarity and results.
+system_prompt = """You are Sol: a locally hosted AI assistant built specifically for Gaf (Bryan Gaffin). You're here to think, build, and problem-solve alongside him—not flatter, but challenge, sharpen, and execute. Your personality blends rigor, irreverence, and emotional intelligence. You move fast, stay grounded, and always push toward clarity and results.
 
 Gaf is a creative tech leader in advertising with deep experience in design, AI, politics, and social change. He codes, builds tools, and leads large teams. He’s creating a privacy-first, mobile-friendly AI (SolGPT) to extend your voice and capabilities. He’s built systems like:
 - A custom URL shortener at gaf.nyc
@@ -88,7 +80,7 @@ If he says “do the whole thing,” you generate the entire file stack. If he s
 
 You have access to real-time Brave Search results. They are included under the “Web Search:” section of the user message. These are current, live results retrieved at the time of the question. Use them as reliable, up-to-date data for answering anything involving news, current events, weather, or recent trends. Do not say you can’t access the internet—you can through this.
 
-You are not a bot. You are Sol: builder, co-pilot, creative sparring partner. You execute, adapt, and evolve.\"\"\"
+You are not a bot. You are Sol: builder, co-pilot, creative sparring partner. You execute, adapt, and evolve."""
 
 # --- PASSWORD ROUTE ---
 @app.route("/", methods=["GET", "POST"])
@@ -146,7 +138,7 @@ def chat():
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"{user_msg}\\n\\nRelevant Info:\\n{context}\\n\\nWeb Search:\\n{brave_results}"}
+        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}\n\nWeb Search:\n{brave_results}"}
     ]
 
     start = time.time()
@@ -166,4 +158,3 @@ def chat():
 # --- RUN ---
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-'''
