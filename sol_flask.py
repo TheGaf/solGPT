@@ -11,7 +11,9 @@ import requests  # GafComment: used to fetch sol.html remotely
 
 # --- LOAD ENV ---
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# GafComment: OpenAI ≥ 1.0 uses client-based syntax
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # --- INIT FLASK APP ---
 app = Flask(__name__)
@@ -85,20 +87,16 @@ def chat():
         file.save(temp_path)
         with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        collection.add(
-            documents=[content],
-            metadatas=[{"filename": file.filename}],
-            ids=[str(time.time())]
-        )
+        collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
 
     context = ""
     if user_msg:
         results = collection.query(query_texts=[user_msg], n_results=1)
-        print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
         if results["documents"] and results["documents"][0]:
             context = results["documents"][0][0][:1000]
         else:
             context = ""  # GafComment: No match in ChromaDB, continue without context
+        print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -107,14 +105,15 @@ def chat():
 
     start = time.time()
     try:
-        response = openai.ChatCompletion.create(model="gpt-4", messages=messages)
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=messages
+        )
         reply = response.choices[0].message.content
     except Exception as e:
         reply = f"Error: {e}"
-
     duration = time.time() - start
     return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{reply}"})
-
 
 # --- RUN ---
 if __name__ == "__main__":
