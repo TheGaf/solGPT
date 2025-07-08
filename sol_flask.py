@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import requests  # GafComment: used to fetch sol.html remotely
 import json
 
+from markdown import markdown  # GafComment: For converting markdown to HTML
+
 
 # --- LOAD ENV ---
 load_dotenv()
@@ -108,7 +110,9 @@ def sol_home():
 @app.route("/chat", methods=["POST"])
 def chat():
     if not session.get("authenticated"):
-        return jsonify({"reply": "Unauthorized"}), 403
+        html_reply = markdown(reply)
+        return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{html_reply}"})
+
 
     user_msg = request.form.get("message", "")
     file = request.files.get("file")
