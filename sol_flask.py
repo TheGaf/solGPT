@@ -87,11 +87,15 @@ def chat():
             content = f.read()
         collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
 
-    context = ""
-    if user_msg:
-        results = collection.query(query_texts=[user_msg], n_results=1)
-        if results["documents"]:
-            context = results["documents"][0][0][:1000]
+context = ""
+if user_msg:
+    results = collection.query(query_texts=[user_msg], n_results=1)
+    if results["documents"] and results["documents"][0]:
+        context = results["documents"][0][0][:1000]
+    else:
+        context = ""  # GafComment: No match in ChromaDB, continue without context
+print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
+
 
     messages = [
         {"role": "system", "content": system_prompt},
