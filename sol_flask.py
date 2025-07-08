@@ -113,13 +113,10 @@ def sol_home():
     except Exception as e:
         return f"Error loading sol.html: {e}", 500
 
-# --- CHAT ENDPOINT ---
 @app.route("/chat", methods=["POST"])
 def chat():
     if not session.get("authenticated"):
-        html_reply = markdown(reply)
-        return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{html_reply}"})
-
+        return jsonify({"reply": "Unauthorized"}), 403  # GafComment: You had invalid logic here
 
     user_msg = request.form.get("message", "")
     file = request.files.get("file")
@@ -135,6 +132,7 @@ def chat():
         collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
 
     context = ""
+    brave_results = ""
     if user_msg:
         results = collection.query(query_texts=[user_msg], n_results=1)
         if results["documents"] and results["documents"][0]:
@@ -144,8 +142,6 @@ def chat():
         # --- ENRICH PROMPT WITH BRAVE SEARCH ---
         brave_results = brave_search(user_msg)
         print("Brave Search Results:", brave_results)
-    else:
-        brave_results = ""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -158,14 +154,12 @@ def chat():
             model="gpt-4",
             messages=messages
         )
-    import markdown  # Put this at the top if you haven’t already
-            reply_raw = response.choices[0].message.content
-            reply_html = markdown.markdown(reply_raw, extensions=['fenced_code', 'tables'])
-
+        reply_raw = response.choices[0].message.content
+        reply_html = markdown(reply_raw, extensions=['fenced_code', 'tables'])  # GafComment: This was incorrectly placed inside the try block before
     except Exception as e:
-        reply = f"Error: {e}"
-    duration = time.time() - start
+        reply_html = f"Error: {e}"
 
+    duration = time.time() - start
     return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{reply_html}"})
 
 
