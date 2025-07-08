@@ -100,7 +100,7 @@ def chat():
 
     start = time.time()
     try:
-        response = openai.chat.completions.create(model="gpt-4", messages=messages)
+        response = openai.ChatCompletion.create(model="gpt-4", messages=messages)
         reply = response.choices[0].message.content
     except Exception as e:
         reply = f"Error: {e}"
