@@ -110,13 +110,9 @@ def chat():
             context = results["documents"][0][0][:1000]
         print("ChromaDB Results:", results)
 
-messages = [
-    {"role": "system", "content": system_prompt},
-    {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
-]
-
-Relevant Info:
-{context}"}
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"{user_msg}\n\nRelevant Info:\n{context}"}
     ]
 
     start = time.time()
@@ -130,6 +126,8 @@ Relevant Info:
         reply = f"Error: {e}"
     duration = time.time() - start
     return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{reply}"})
+
+
 
 # --- RUN ---
 if __name__ == "__main__":
