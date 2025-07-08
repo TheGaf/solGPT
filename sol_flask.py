@@ -77,6 +77,9 @@ def chat():
     user_msg = request.form.get("message", "")
     file = request.files.get("file")
 
+    print("User Message Received:", user_msg)  # GafComment: Debug print
+    print("File Uploaded:", file.filename if file else "No file")  # GafComment: Debug print
+
     if file:
         temp_path = os.path.join(tempfile.gettempdir(), file.filename)
         file.save(temp_path)
