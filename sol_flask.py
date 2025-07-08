@@ -1,7 +1,7 @@
 
 # --- IMPORTS ---
 from flask import Flask, request, jsonify, render_template_string, render_template, redirect, url_for, session
-import openai
+from groq import Groq
 import time
 import os
 import tempfile
@@ -17,8 +17,9 @@ from markdown import markdown  # GafComment: For converting markdown to HTML
 # --- LOAD ENV ---
 load_dotenv()
 
-# GafComment: OpenAI ≥ 1.0 uses client-based syntax
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# GafComment: Groq not GROK
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
 
 # --- BRAVE SEARCH FUNCTION ---
 def brave_search(query):
@@ -151,10 +152,12 @@ def chat():
     start = time.time()
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages
-        )
-        reply_raw = response.choices[0].message.content
+   		model="mixtral-8x7b-32768",
+    		messages=messages,
+    		temperature=0.7,
+    		max_tokens=1024
+	)
+	reply_raw = response.choices[0].message.content
         reply_html = markdown(reply_raw, extensions=['fenced_code', 'tables'])  # GafComment: This was incorrectly placed inside the try block before
     except Exception as e:
         reply_html = f"Error: {e}"
