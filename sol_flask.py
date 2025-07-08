@@ -85,17 +85,20 @@ def chat():
         file.save(temp_path)
         with open(temp_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        collection.add(documents=[content], metadatas=[{"filename": file.filename}], ids=[str(time.time())])
+        collection.add(
+            documents=[content],
+            metadatas=[{"filename": file.filename}],
+            ids=[str(time.time())]
+        )
 
-context = ""
-if user_msg:
-    results = collection.query(query_texts=[user_msg], n_results=1)
-    if results["documents"] and results["documents"][0]:
-        context = results["documents"][0][0][:1000]
-    else:
-        context = ""  # GafComment: No match in ChromaDB, continue without context
-print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
-
+    context = ""
+    if user_msg:
+        results = collection.query(query_texts=[user_msg], n_results=1)
+        print("ChromaDB Results:", results)  # GafComment: Shows what came back from ChromaDB
+        if results["documents"] and results["documents"][0]:
+            context = results["documents"][0][0][:1000]
+        else:
+            context = ""  # GafComment: No match in ChromaDB, continue without context
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -108,8 +111,10 @@ print("ChromaDB Results:", results)  # GafComment: Shows what came back from Chr
         reply = response.choices[0].message.content
     except Exception as e:
         reply = f"Error: {e}"
+
     duration = time.time() - start
     return jsonify({"reply": f"<small>[{duration:.2f}s]</small><br>{reply}"})
+
 
 # --- RUN ---
 if __name__ == "__main__":
