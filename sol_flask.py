@@ -39,7 +39,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG & CLIENTS ---
-# Validate required env vars (Drive creds optional)
+# Required env vars
 required_vars = ["SOL_GPT_PASSWORD", "BRAVE_API_KEY", "GROQ_API_KEY"]
 for var in required_vars:
     if not os.getenv(var):
@@ -155,7 +155,7 @@ def format_brave_html(results):
     lines = []
     for idx, r in enumerate(results, start=1):
         lines.append(
-            f"<p><strong>[{idx}] <a href=\"{r['url']}\" target=\"_blank\" rel=\"noopener\">"
+            f"<p><strong>[{idx}] <a href='"{r['url']}"' target='_blank' rel='noopener'>" +
             f"{r['title']}</a></strong><br>{r['description']}</p>"
         )
     return "".join(lines)
@@ -183,6 +183,11 @@ def sol_home():
         return jsonify({"error": "Not authenticated"}), 401
 
     user_msg = request.form.get('message', '').strip()
+    # Skip citations for casual greetings
+    greetings = {'hi', 'hello', 'hey'}
+    first_word = user_msg.lower().split()[0] if user_msg else ''
+    casual = first_word in greetings and len(user_msg.split()) <= 2
+
     uploaded_file = request.files.get('file')
 
     history = session.setdefault('history', [])
@@ -190,7 +195,7 @@ def sol_home():
     session['history'] = history[-20:]
 
     drive_contexts, drive_sources = [], []
-    if drive_service:
+    if drive_service and not casual:
         try:
             res = text_collection.query(query_texts=[user_msg], n_results=3)
             docs, metas = res.get('documents')[0], res.get('metadatas')[0]
@@ -201,7 +206,7 @@ def sol_home():
             logger.warning(f"Drive RAG failed: {e}")
 
     image_context, image_source = '', None
-    if uploaded_file and CLIP_AVAILABLE:
+    if uploaded_file and CLIP_AVAILABLE and not casual:
         try:
             img_data = uploaded_file.read()
             clip_fn = OpenCLIPEmbeddingFunction()
@@ -212,8 +217,12 @@ def sol_home():
         except Exception as e:
             logger.warning(f"Image RAG failed: {e}")
 
-    brave_results = brave_search(user_msg)
-    brave_html = format_brave_html(brave_results)
+    brave_html = ''
+    if not casual:
+        brave_results = brave_search(user_msg)
+        brave_html = format_brave_html(brave_results)
+    else:
+        brave_results = []
 
     parts = [user_msg]
     if drive_contexts:
@@ -231,9 +240,8 @@ def sol_home():
         resp = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
-                'Authorization': f"Bearer {os.getenv('GROQ_API_KEY')}  ",
-                'Content-Type': 'application/json'
-            },
+                'Authorization': f"Bearer {os.getenv('GROQ_API_KEY')}"},
+                'Content-Type': 'application/json'},
             json={
                 'model': 'llama3-8b-8192',
                 'messages': messages,
@@ -252,13 +260,14 @@ def sol_home():
 
     reply_html = markdownify.markdownify(reply_md, heading_style="ATX")
     sources_html = []
-    if drive_sources:
-        sources_html.append('<h4>Drive Sources</h4>' + '<br>'.join(f'[{i+1}] {s}' for i, s in enumerate(drive_sources)))
-    if image_source:
-        sources_html.append(f'<h4>Image Source</h4>[{image_source}]')
-    if brave_results:
-        sources_html.append(f'<h4>Web Sources</h4>{brave_html}')
-    structured_html = reply_html + '<hr>' + ''.join(sources_html)
+    if not casual:
+        if drive_sources:
+            sources_html.append('<h4>Drive Sources</h4>' + '<br>'.join(f'[{i+1}] {s}' for i, s in enumerate(drive_sources)))
+        if image_source:
+            sources_html.append(f'<h4>Image Source</h4>[{image_source}]')
+        if brave_html:
+            sources_html.append(f'<h4>Web Sources</h4>{brave_html}')
+    structured_html = reply_html + ('<hr>' + ''.join(sources_html) if sources_html else '')
 
     return jsonify({'reply': structured_html, 'duration': f"[{duration:.2f}s]", 'html': page_html})
 
