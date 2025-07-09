@@ -4,5 +4,6 @@ groq
 gunicorn
 chromadb
 python-dotenv
-markdown
 beautifulsoup4
+requests
+markdownify
