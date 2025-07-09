@@ -29,8 +29,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG & CLIENTS ---
-# Validate required env vars
-for var in ("SOL_GPT_PASSWORD", "BRAVE_API_KEY", "GROQ_API_KEY", "DRIVE_CRED_PATH", "DRIVE_FOLDER_ID"):
+# Validate required env vars (Drive creds optional)
+required_vars = ["SOL_GPT_PASSWORD", "BRAVE_API_KEY", "GROQ_API_KEY"]
+for var in required_vars:
     if not os.getenv(var):
         raise RuntimeError(f"Missing required environment variable: {var}")
 
@@ -44,21 +45,26 @@ text_collection = chroma_client.get_or_create_collection(
     embedding_function=embedding_functions.DefaultEmbeddingFunction()
 )
 
-# Google Drive setup for RAG
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-SERVICE_ACCOUNT_FILE = os.getenv("DRIVE_CRED_PATH")
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
-)
-drive_service = build("drive", "v3", credentials=creds)
+# Google Drive setup for RAG (optional)
+drive_service = None
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
+_creds_path = os.getenv("DRIVE_CRED_PATH")
+if _creds_path and os.path.isfile(_creds_path) and FOLDER_ID:
+    try:
+        SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+        creds = service_account.Credentials.from_service_account_file(_creds_path, scopes=SCOPES)
+        drive_service = build("drive", "v3", credentials=creds)
+        logger.info("Google Drive RAG enabled.")
+    except Exception as e:
+        logger.warning(f"Google Drive credentials not loaded: {e}")
+else:
+    logger.info("Google Drive RAG disabled (missing creds or folder ID).")
 
 # Simple text splitter to avoid langchain dependency
 def split_text(text, chunk_size=1000, chunk_overlap=200):
     docs = []
     start = 0
-    length = len(text)
-    while start < length:
+    while start < len(text):
         end = start + chunk_size
         docs.append(text[start:end])
         start += chunk_size - chunk_overlap
@@ -66,6 +72,8 @@ def split_text(text, chunk_size=1000, chunk_overlap=200):
 
 # Function to load and index Drive docs with per-file error handling
 def load_drive_docs():
+    if not drive_service:
+        return
     try:
         resp = drive_service.files().list(
             q=f"'{FOLDER_ID}' in parents and trashed = false",
@@ -160,7 +168,7 @@ except Exception as e:
 # --- HELPERS ---
 def brave_search(query):
     headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  # GafComment: Use GET
-    params = {"q": query[:200], "count": 5, "freshness": "day"}  # limit query length
+    params = {"q": query[:200], "count": 5, "freshness": "day"}
     try:
         resp = requests.get(
             "https://api.search.brave.com/res/v1/web/search",
@@ -209,17 +217,15 @@ def sol_home():
     session["history"] = history[-20:]
 
     # Drive RAG context
-    drive_docs, drive_meta = [], []
-    try:
-        res = text_collection.query(query_texts=[user_msg], n_results=3)
-        docs_list = res.get("documents", [[""]])[0]
-        metas_list = res.get("metadatas", [[{}]])[0]
-        for d, m in zip(docs_list, metas_list):
-            drive_docs.append(d)
-            drive_meta.append(m.get("source", ""))
-    except Exception as e:
-        logger.warning(f"Drive RAG query failed: {e}")
-    drive_context = "\n\n".join(f"[{src}] {txt}" for src, txt in zip(drive_meta, drive_docs))
+    drive_context = ""
+    if drive_service:
+        try:
+            res = text_collection.query(query_texts=[user_msg], n_results=3)
+            dr_docs = res.get("documents", [[""]])[0]
+            dr_meta = res.get("metadatas", [[{}]])[0]
+            drive_context = "\n\n".join(f"[{m.get('source','')}] {d}" for d, m in zip(dr_docs, dr_meta))
+        except Exception as e:
+            logger.warning(f"Drive RAG query failed: {e}")
 
     # Image context
     context = ""
@@ -236,16 +242,15 @@ def sol_home():
     brave_results = brave_search(user_msg)
 
     # Assemble content parts
-    content_parts = [f"{user_msg}"]
+    parts = [user_msg]
     if drive_context:
-        content_parts.append(f"Drive Context:\n{drive_context}")
+        parts.append(f"Drive Context:\n{drive_context}")
     if context:
-        content_parts.append(f"Image Context:\n{context}")
+        parts.append(f"Image Context:\n{context}")
     if brave_results:
-        content_parts.append(f"Web Search:\n{brave_results}")
-    content = "\n\n".join(content_parts)
+        parts.append(f"Web Search:\n{brave_results}")
+    content = "\n\n".join(parts)
 
-    # Final message stack
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
 
     start_time = time.time()
@@ -261,7 +266,8 @@ def sol_home():
         duration = time.time() - start_time
 
         # Append assistant reply then trim
-        session["history"] = (session.get("history", []) + [{"role": "assistant", "content": reply_raw}])[-20:]
+        hist = session.get("history", []) + [{"role": "assistant", "content": reply_raw}]
+        session["history"] = hist[-20:]
 
         htmlified = markdownify.markdownify(reply_raw, heading_style="ATX")
         soup = BeautifulSoup(htmlified, "html.parser")
