@@ -231,7 +231,7 @@ def sol_home():
         resp = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
-                'Authorization': f"Bearer {os.getenv('GROQ_API_KEY')}",
+                'Authorization': f"Bearer {os.getenv('GROQ_API_KEY')}  ",
                 'Content-Type': 'application/json'
             },
             json={
