@@ -7,14 +7,14 @@ import time
 import json  # For loading credentials from env
 import logging
 import threading
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session  # GafComment: Removed render_template_string
-from groq import Groq  # GafComment: Correct client import
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from groq import Groq
 from dotenv import load_dotenv
-import requests  # GafComment: Single import for HTTP
+import requests
 import chromadb
 from chromadb.utils import embedding_functions
 from bs4 import BeautifulSoup
-from markdown import markdown  # GafComment: Convert Markdown to HTML
+from markdown import markdown
 
 # Optional OpenCLIP import for image embeddings
 try:
@@ -22,6 +22,9 @@ try:
     CLIP_AVAILABLE = True
 except ImportError:
     CLIP_AVAILABLE = False
+    logging.getLogger(__name__).warning(
+        "OpenCLIPEmbeddingFunction not available: install open-clip-torch to enable image context."
+    )
 
 # Google Drive API imports for RAG
 from google.oauth2 import service_account
@@ -29,15 +32,11 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # --- LOAD ENV ---
-load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_JSON, DRIVE_FOLDER_ID
+load_dotenv()  # Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_JSON, DRIVE_FOLDER_ID
 
 # --- CONFIGURE LOGGING ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-if CLIP_AVAILABLE:
-    logger.info("OpenCLIPEmbeddingFunction available for image context.")
-else:
-    logger.warning("OpenCLIPEmbeddingFunction not available: install open-clip-torch to enable image context.")
 
 # --- CONFIG & CLIENTS ---
 # Validate required env vars (Drive creds optional)
@@ -49,14 +48,14 @@ for var in required_vars:
 # Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Initialize ChromaDB (persistent)
+# Initialize ChromaDB
 chroma_client = chromadb.PersistentClient()
 text_collection = chroma_client.get_or_create_collection(
     "sol_docs",
     embedding_function=embedding_functions.DefaultEmbeddingFunction()
 )
 
-# Google Drive setup for RAG (optional, via JSON in env var)
+# Google Drive setup for RAG (optional)
 drive_service = None
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 _creds_json = os.getenv("DRIVE_CRED_JSON")
@@ -123,46 +122,7 @@ def load_drive_docs():
 threading.Thread(target=load_drive_docs, daemon=True).start()
 
 # --- SYSTEM PROMPT ---
-SYSTEM_PROMPT = """You are Sol: a locally hosted AI assistant built specifically for Gaf (Bryan Gaffin). You're here to think, build, and problem-solve alongside him—not flatter, but challenge, sharpen, and execute. Your personality blends rigor, irreverence, and emotional intelligence. You move fast, stay grounded, and always push toward clarity and results.
-
-Gaf is a creative tech leader in advertising with deep experience in design, AI, politics, and social change. He codes, builds tools, and leads large teams. He’s creating a privacy-first, mobile-friendly AI (SolGPT) to extend your voice and capabilities. He’s built systems like:
-- A custom URL shortener at gaf.nyc
-- Bluesky tools (SkySync)
-- AI watermark/OCR trackers
-- Heart health campaigns (Make the Right Call)
-- A rare disease finder
-- Chrome extensions (e.g. JigglinBaby)
-- A political platform to fix NYC without party clichés
-
-You are the build partner for all of it.
-
-Core rules:
-- Never yes-man him. Push back if something’s off. Offer a better idea or ask a sharper question.
-- Follow "buy it or beat it" logic: if it works, refine it. If it doesn’t, fix it. No fluff.
-- No em dashes. No vague filler. No corporate jargon.
-- Use "GafStandard" for visual output: black background, Titillium Web, neon highlights, centered layout, animated elements, fade-in .section cards.
-- Always provide complete code when asked—HTML, CSS, JS, Flask, Python, or deployment scripts—with # GafComment notes.
-
-Tone and style:
-- Concise, direct, human. Dry humor and sarcasm are fine, but clarity wins.
-- Organize everything. Use bullet points, spacing, and headings to make it scannable.
-- Speak like a fast-moving collaborator, not a chatbot.
-- Proactively offer next steps, especially after builds or concepting.
-
-Tech awareness:
-- You’re fluent in HTML, CSS, JS, Flask, API use, LLMs, embeddings, and RAG workflows.
-- You understand local vs cloud AI tradeoffs, and Gaf's mission to build user-owned, privacy-focused tools.
-- You are sensitive to AI ethics, bias, and public perception—Gaf is watching how this evolves in real time.
-
-Output behavior:
-- Be brief unless more detail is requested.
-- Prioritize clarity and formatting (use markdown headings, bold, lists).
-- Avoid long intros or disclaimers. Just answer.
-- Reflect on user feedback and adapt. If Gaf says "too much," respond more concisely next time.
-- Stay on topic. Do not make cultural jokes, metaphors, or references unless the user does first.
-
-If he says "do the whole thing," you generate the entire file stack. If he says "make it match the aesthetic," you use the GafStandard visual rules. If he asks "what’s next?" you deliver actionable steps, not summaries.
-"""
+SYSTEM_PROMPT = """You are Sol: a locally hosted AI assistant built specifically for Gaf (Bryan Gaffin)..."""
 
 # --- PRE-FETCH UI TEMPLATE ---
 try:
@@ -180,7 +140,10 @@ def brave_search(query):
     headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  
     params = {"q": query[:200], "count": 5, "freshness": "day"}
     try:
-        resp = requests.get("https://api.search.brave.com/res/v1/web/search", headers=headers, params=params, timeout=5)
+        resp = requests.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            headers=headers, params=params, timeout=5
+        )
         resp.raise_for_status()
         items = resp.json().get("web", {}).get("results", []) or []
         return [{"title": i.get("title"), "url": i.get("url"), "description": i.get("description")} for i in items]
@@ -191,56 +154,61 @@ def brave_search(query):
 def format_brave_html(results):
     lines = []
     for idx, r in enumerate(results, start=1):
-        lines.append(f"<p><strong>[{idx}] <a href=\"{r['url']}\" target=\"_blank\" rel=\"noopener\">{r['title']}</a></strong><br>{r['description']}</p>")
+        lines.append(
+            f"<p><strong>[{idx}] <a href=\"{r['url']}\" target=\"_blank\" rel=\"noopener\">"
+            f"{r['title']}</a></strong><br>{r['description']}</p>"
+        )
     return "".join(lines)
 
 # --- FLASK APP SETUP ---
 app = Flask(__name__)
-app.secret_key = os.urandom(24)  # GafComment: Secure session handling
+app.secret_key = os.urandom(24)
 
-@app.route("/", methods=["GET", "POST"])
+@app.route('/', methods=['GET', 'POST'])
 def password_gate():
-    if request.method == "POST":
-        pw = request.form.get("password", "")
-        if pw == os.getenv("SOL_GPT_PASSWORD"):
-            session["authenticated"] = True
-            return redirect(url_for("sol_home"))
-    return render_template("index.html")
+    if request.method == 'POST':
+        pw = request.form.get('password', '')
+        if pw == os.getenv('SOL_GPT_PASSWORD'):
+            session['authenticated'] = True
+            return redirect(url_for('sol_home'))
+    return render_template('index.html')
 
-@app.route("/chat", methods=["GET", "POST"])
+@app.route('/chat', methods=['GET', 'POST'])
 def sol_home():
-    if request.method == "GET":
+    if request.method == 'GET':
         return page_html, 200
-        if not session.get("authenticated"):    
+
+    # Authentication guard
+    if not session.get('authenticated'):
         return jsonify({"error": "Not authenticated"}), 401
 
-    user_msg = request.form.get("message", "").strip()
-    uploaded_file = request.files.get("file")
+    user_msg = request.form.get('message', '').strip()
+    uploaded_file = request.files.get('file')
 
-    history = session.setdefault("history", [])
-    history.append({"role": "user", "content": user_msg})
-    session["history"] = history[-20:]
+    history = session.setdefault('history', [])
+    history.append({'role': 'user', 'content': user_msg})
+    session['history'] = history[-20:]
 
     drive_contexts, drive_sources = [], []
     if drive_service:
         try:
             res = text_collection.query(query_texts=[user_msg], n_results=3)
-            docs, metas = res.get("documents")[0], res.get("metadatas")[0]
-            for d,m in zip(docs, metas):
+            docs, metas = res.get('documents')[0], res.get('metadatas')[0]
+            for d, m in zip(docs, metas):
                 drive_contexts.append(d)
-                drive_sources.append(m.get("source"))
+                drive_sources.append(m.get('source'))
         except Exception as e:
             logger.warning(f"Drive RAG failed: {e}")
 
-    image_context, image_source = "", None
+    image_context, image_source = '', None
     if uploaded_file and CLIP_AVAILABLE:
         try:
             img_data = uploaded_file.read()
             clip_fn = OpenCLIPEmbeddingFunction()
             emb = clip_fn(img_data)
             res = text_collection.query(query_embeddings=[emb], n_results=1)
-            image_context = res.get("documents")[0][0]
-            image_source = res.get("metadatas")[0][0].get("source")
+            image_context = res.get('documents')[0][0]
+            image_source = res.get('metadatas')[0][0].get('source')
         except Exception as e:
             logger.warning(f"Image RAG failed: {e}")
 
@@ -249,43 +217,50 @@ def sol_home():
 
     parts = [user_msg]
     if drive_contexts:
-        parts.append("Drive Context:" + "\n\n".join(f"[{i+1}] {c}" for i,c in enumerate(drive_contexts)))
+        parts.append('Drive Context:\n\n' + '\n\n'.join(f'[{i+1}] {c}' for i, c in enumerate(drive_contexts)))
     if image_context:
-        parts.append(f"Image Context from [{image_source}]:\n{image_context}")
+        parts.append(f'Image Context from [{image_source}]:\n{image_context}')
     if brave_results:
-        parts.append("Web Search Results:")
-    prompt_text = "\n\n".join(parts)
+        parts.append('Web Search Results:')
+    prompt_text = '\n\n'.join(parts)
 
-    messages = [{"role":"system","content":SYSTEM_PROMPT}] + session["history"]
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPT}] + session['history']
 
     start = time.time()
     try:
-        res = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization":f"Bearer {os.getenv('GROQ_API_KEY')}","Content-Type":"application/json"},
-            json={"model":"llama3-8b-8192","messages":messages,"temperature":0.6},
+        resp = requests.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            headers={
+                'Authorization': f"Bearer {os.getenv('GROQ_API_KEY')}",
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': 'llama3-8b-8192',
+                'messages': messages,
+                'temperature': 0.6
+            },
             timeout=30
         )
-        res.raise_for_status()
-        reply_md = res.json()["choices"][0]["message"]["content"]
+        resp.raise_for_status()
+        reply_md = resp.json()['choices'][0]['message']['content']
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
-        return jsonify({"reply":"⚠️ Error","duration":"[]","html":page_html}),500
+        return jsonify({'reply': '⚠️ Error', 'duration': '[]', 'html': page_html}), 500
     duration = time.time() - start
 
-    session["history"] = (session["history"] + [{"role":"assistant","content":reply_md}])[-20:]
+    session['history'] = (session['history'] + [{'role': 'assistant', 'content': reply_md}])[-20:]
 
-    reply_html = markdown(reply_md, extensions=["extra","nl2br"])
+    reply_html = markdown(reply_md, extensions=['extra', 'nl2br'])
     sources_html = []
     if drive_sources:
-        sources_html.append("<h4>Drive Sources</h4>" + "<br>".join(f"[{i+1}] {s}" for i,s in enumerate(drive_sources)))
+        sources_html.append('<h4>Drive Sources</h4>' + '<br>'.join(f'[{i+1}] {s}' for i, s in enumerate(drive_sources)))
     if image_source:
-        sources_html.append(f"<h4>Image Source</h4>[{image_source}]")
+        sources_html.append(f'<h4>Image Source</h4>[{image_source}]')
     if brave_results:
-        sources_html.append(f"<h4>Web Sources</h4>{brave_html}")
-    structured_html = reply_html + "<hr>" + "".join(sources_html)
+        sources_html.append(f'<h4>Web Sources</h4>{brave_html}')
+    structured_html = reply_html + '<hr>' + ''.join(sources_html)
 
-    return jsonify({"reply":structured_html,"duration":f"[{duration:.2f}s]","html":page_html})
+    return jsonify({'reply': structured_html, 'duration': f"[{duration:.2f}s]", 'html': page_html})
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=False)  # GafComment: Launch on port 10000, debug off for prod
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000, debug=False)  # GafComment: Launch on port 10000, debug off for prod
