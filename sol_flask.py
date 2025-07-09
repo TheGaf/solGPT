@@ -74,6 +74,14 @@ Output behavior:
 If he says “do the whole thing,” you generate the entire file stack. If he says “make it match the aesthetic,” you use the GafStandard visual rules. If he asks “what’s next?” you deliver actionable steps, not summaries.
 """
 
+# --- PRE-FETCH UI TEMPLATE ---
+# GafComment: Fetch sol.html once so GET can serve it
+try:
+    ui_resp = requests.get("https://gaf.nyc/sol.html", timeout=5)
+    page_html = ui_resp.text
+except Exception as e:
+    page_html = f"<!-- sol.html fetch error: {e} -->"
+
 # --- HELPERS ---
 def brave_search(query):
     """Perform a web search via Brave API"""
@@ -114,41 +122,35 @@ def password_gate():
             return redirect(url_for("sol_home"))
     return render_template("index.html")  # GafComment: Local copy of login page
 
-@app.route("/chat", methods=["POST"])
+@app.route("/chat", methods=["GET", "POST"])
 def sol_home():
-    # Authentication guard
+    # Serve UI on GET
+    if request.method == "GET":
+        return page_html, 200
+
+    # POST handler: chat logic
     if not session.get("authenticated"):
         return jsonify({"error": "Not authenticated"}), 401
-
-    # Safely fetch static HTML template
-    try:
-        page_response = requests.get("https://gaf.nyc/sol.html", timeout=5)
-        page_html = page_response.text
-    except Exception as e:
-        page_html = f"<!-- sol.html fetch error: {e} -->"
 
     user_msg = request.form.get("message", "").strip()
     uploaded_file = request.files.get("file")
     context = ""
 
-    # Initialize session history
     session.setdefault("history", [])
 
-    # Handle uploaded image context via OpenCLIP
+    # Image context via OpenCLIP
     if uploaded_file:
         img_data = uploaded_file.read()
-        clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()  # GafComment: OCR/image embeddings
-        embedding = clip_fn(img_data)                            # GafComment: Single vector
+        clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
+        embedding = clip_fn(img_data)
         results = text_collection.query(
             query_embeddings=[embedding],
             n_results=1
         )
-        context = results["documents"][0][0] if results.get("documents") else ""
+        context = results.get("documents", [[""]])[0][0]
 
-    # Perform Brave search
     brave_results = brave_search(user_msg)
 
-    # Append user input to history
     session["history"].append({
         "role": "user",
         "content": (
@@ -158,10 +160,8 @@ def sol_home():
         )
     })
 
-    # Build message stack
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
 
-    # Call Groq chat endpoint
     start_time = time.time()
     try:
         groq_resp = requests.post(
@@ -181,10 +181,8 @@ def sol_home():
         reply_raw = groq_resp.json()["choices"][0]["message"]["content"]
         duration = time.time() - start_time
 
-        # Save assistant reply
         session["history"].append({"role": "assistant", "content": reply_raw})
 
-        # Convert markdown to safe HTML
         htmlified = markdownify.markdownify(reply_raw, heading_style="ATX")
         soup = BeautifulSoup(htmlified, "html.parser")
         for a in soup.find_all("a"):
@@ -207,5 +205,4 @@ def sol_home():
 
 # --- RUN APP ---
 if __name__ == "__main__":
-    # GafComment: Launch app on port 10000
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(host="0.0.0.0", port=10000, debug=True)  # GafComment: Launch on port 10000
