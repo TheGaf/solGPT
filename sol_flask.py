@@ -211,7 +211,7 @@ def password_gate():
 def sol_home():
     if request.method == "GET":
         return page_html, 200
-    if not session.get("authenticated"]):
+        if not session.get("authenticated"):    
         return jsonify({"error": "Not authenticated"}), 401
 
     user_msg = request.form.get("message", "").strip()
