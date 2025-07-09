@@ -1,21 +1,27 @@
 # sol_app.py
 
 # --- IMPORTS ---
+import os
+import io
+import time
+import json  # For loading credentials from env
+import logging
+import threading
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session  # GafComment: Removed render_template_string
 from groq import Groq  # GafComment: Correct client import
-import os
-import time
-import base64
-import io
-import json  # GafComment: For loading credentials from env
-import requests  # GafComment: Single import for HTTP
 from dotenv import load_dotenv
+import requests  # GafComment: Single import for HTTP
 import chromadb
 from chromadb.utils import embedding_functions
 from bs4 import BeautifulSoup
 from markdown import markdown  # GafComment: Convert Markdown to HTML
-import logging
-import threading
+
+# Optional OpenCLIP import for image embeddings
+try:
+    from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+    CLIP_AVAILABLE = True
+except ImportError:
+    CLIP_AVAILABLE = False
 
 # Google Drive API imports for RAG
 from google.oauth2 import service_account
@@ -28,6 +34,10 @@ load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY
 # --- CONFIGURE LOGGING ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+if CLIP_AVAILABLE:
+    logger.info("OpenCLIPEmbeddingFunction available for image context.")
+else:
+    logger.warning("OpenCLIPEmbeddingFunction not available: install open-clip-torch to enable image context.")
 
 # --- CONFIG & CLIENTS ---
 # Validate required env vars (Drive creds optional)
@@ -58,11 +68,12 @@ if _creds_json and FOLDER_ID:
         drive_service = build("drive", "v3", credentials=creds)
         logger.info("Google Drive RAG enabled.")
     except Exception as e:
+        drive_service = None
         logger.warning(f"Google Drive credentials not loaded: {e}")
 else:
     logger.info("Google Drive RAG disabled (missing JSON creds or folder ID).")
 
-# Simple text splitter to avoid langchain dependency
+# --- TEXT SPLITTER ---
 def split_text(text, chunk_size=1000, chunk_overlap=200):
     docs = []
     start = 0
@@ -72,7 +83,7 @@ def split_text(text, chunk_size=1000, chunk_overlap=200):
         start += chunk_size - chunk_overlap
     return docs
 
-# Function to load and index Drive docs with per-file error handling
+# --- DRIVE INDEXER ---
 def load_drive_docs():
     if not drive_service:
         return
@@ -85,7 +96,6 @@ def load_drive_docs():
     except Exception as e:
         logger.error(f"Failed to list Drive files: {e}")
         return
-
     for f in files:
         try:
             fid, name, mime = f['id'], f['name'], f['mimeType']
@@ -110,7 +120,6 @@ def load_drive_docs():
         except Exception as ex:
             logger.warning(f"Failed to index {name}: {ex}")
 
-# Index Drive docs in background thread to avoid blocking startup
 threading.Thread(target=load_drive_docs, daemon=True).start()
 
 # --- SYSTEM PROMPT ---
@@ -168,24 +177,17 @@ except Exception as e:
 
 # --- HELPERS ---
 def brave_search(query):
-    """Returns list of web search results as dicts"""
     headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  
     params = {"q": query[:200], "count": 5, "freshness": "day"}
     try:
-        resp = requests.get("https://api.search.brave.com/res/v1/web/search",
-                            headers=headers, params=params, timeout=5)
+        resp = requests.get("https://api.search.brave.com/res/v1/web/search", headers=headers, params=params, timeout=5)
         resp.raise_for_status()
         items = resp.json().get("web", {}).get("results", []) or []
-        return [{
-            "title": i.get("title"),
-            "url": i.get("url"),
-            "description": i.get("description")
-        } for i in items]
+        return [{"title": i.get("title"), "url": i.get("url"), "description": i.get("description")} for i in items]
     except Exception as e:
         logger.error(f"Brave search failed: {e}")
         return []
 
-# Format structured citations for Brave results
 def format_brave_html(results):
     lines = []
     for idx, r in enumerate(results, start=1):
@@ -196,7 +198,6 @@ def format_brave_html(results):
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # GafComment: Secure session handling
 
-# --- ROUTES ---
 @app.route("/", methods=["GET", "POST"])
 def password_gate():
     if request.method == "POST":
@@ -210,35 +211,32 @@ def password_gate():
 def sol_home():
     if request.method == "GET":
         return page_html, 200
-    if not session.get("authenticated"):
+    if not session.get("authenticated"]):
         return jsonify({"error": "Not authenticated"}), 401
 
     user_msg = request.form.get("message", "").strip()
     uploaded_file = request.files.get("file")
 
-    # Session memory
     history = session.setdefault("history", [])
     history.append({"role": "user", "content": user_msg})
     session["history"] = history[-20:]
 
-    # RAG contexts
-    # Drive
     drive_contexts, drive_sources = [], []
     if drive_service:
         try:
             res = text_collection.query(query_texts=[user_msg], n_results=3)
             docs, metas = res.get("documents")[0], res.get("metadatas")[0]
-            for d,m in zip(docs,metas):
+            for d,m in zip(docs, metas):
                 drive_contexts.append(d)
                 drive_sources.append(m.get("source"))
         except Exception as e:
             logger.warning(f"Drive RAG failed: {e}")
-    # Image
+
     image_context, image_source = "", None
-    if uploaded_file:
+    if uploaded_file and CLIP_AVAILABLE:
         try:
             img_data = uploaded_file.read()
-            clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
+            clip_fn = OpenCLIPEmbeddingFunction()
             emb = clip_fn(img_data)
             res = text_collection.query(query_embeddings=[emb], n_results=1)
             image_context = res.get("documents")[0][0]
@@ -246,11 +244,9 @@ def sol_home():
         except Exception as e:
             logger.warning(f"Image RAG failed: {e}")
 
-    # Web search
     brave_results = brave_search(user_msg)
     brave_html = format_brave_html(brave_results)
 
-    # Assemble prompt
     parts = [user_msg]
     if drive_contexts:
         parts.append("Drive Context:" + "\n\n".join(f"[{i+1}] {c}" for i,c in enumerate(drive_contexts)))
@@ -260,10 +256,8 @@ def sol_home():
         parts.append("Web Search Results:")
     prompt_text = "\n\n".join(parts)
 
-    # Build messages
     messages = [{"role":"system","content":SYSTEM_PROMPT}] + session["history"]
 
-    # Call LLM
     start = time.time()
     try:
         res = requests.post(
@@ -277,14 +271,11 @@ def sol_home():
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         return jsonify({"reply":"⚠️ Error","duration":"[]","html":page_html}),500
-    duration = time.time()-start
+    duration = time.time() - start
 
-    # Trim history
     session["history"] = (session["history"] + [{"role":"assistant","content":reply_md}])[-20:]
 
-    # Convert Markdown reply to HTML
     reply_html = markdown(reply_md, extensions=["extra","nl2br"])
-    # Inject structured sources box
     sources_html = []
     if drive_sources:
         sources_html.append("<h4>Drive Sources</h4>" + "<br>".join(f"[{i+1}] {s}" for i,s in enumerate(drive_sources)))
@@ -296,6 +287,5 @@ def sol_home():
 
     return jsonify({"reply":structured_html,"duration":f"[{duration:.2f}s]","html":page_html})
 
-# --- RUN APP ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0",port=10000,debug=False)  # GafComment: Launch on port 10000, debug off for prod
+    app.run(host="0.0.0.0", port=10000, debug=False)  # GafComment: Launch on port 10000, debug off for prod
