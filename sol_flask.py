@@ -19,9 +19,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# If using a text splitter library; otherwise implement your own
-from langchain.text_splitter import RecursiveCharacterTextSplitter  # GafComment: For splitting docs
-
 # --- LOAD ENV ---
 load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_PATH, DRIVE_FOLDER_ID
 
@@ -50,8 +47,19 @@ creds = service_account.Credentials.from_service_account_file(
 drive_service = build("drive", "v3", credentials=creds)
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 
+# Simple text splitter to avoid langchain dependency
+# GafComment: Splits text into chunks of up to chunk_size with overlap
+def split_text(text, chunk_size=1000, chunk_overlap=200):
+    docs = []
+    start = 0
+    length = len(text)
+    while start < length:
+        end = start + chunk_size
+        docs.append(text[start:end])
+        start += chunk_size - chunk_overlap
+    return docs
+
 # Function to load and index Drive docs
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 def load_drive_docs():
     resp = drive_service.files().list(
         q=f"'{FOLDER_ID}' in parents and trashed = false",
@@ -69,13 +77,14 @@ def load_drive_docs():
         while not done:
             _, done = downloader.next_chunk()
         text = fh.getvalue().decode('utf-8', errors='ignore')
-        docs = splitter.split_text(text)
+        docs = split_text(text)
         embeddings = [embedding_functions.DefaultEmbeddingFunction()(d) for d in docs]
         text_collection.add(
             embeddings=embeddings,
             documents=docs,
             metadatas=[{"source": name}] * len(docs)
         )
+# Index Drive docs now
 load_drive_docs()
 
 # --- SYSTEM PROMPT ---
