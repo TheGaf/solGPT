@@ -1,4 +1,4 @@
-# sol_app.py
+# sol_flask.py
 
 # --- IMPORTS ---
 import os
@@ -250,7 +250,7 @@ def sol_home():
 
     session['history'] = (session['history'] + [{'role': 'assistant', 'content': reply_md}])[-20:]
 
-    reply_html = markdownify.markdownify(reply_md, heading_style="ATX")  # GafComment: Use markdownify for conversion
+    reply_html = markdownify.markdownify(reply_md, heading_style="ATX")
     sources_html = []
     if drive_sources:
         sources_html.append('<h4>Drive Sources</h4>' + '<br>'.join(f'[{i+1}] {s}' for i, s in enumerate(drive_sources)))
