@@ -14,7 +14,7 @@ import requests
 import chromadb
 from chromadb.utils import embedding_functions
 from bs4 import BeautifulSoup
-from markdown import markdown
+import markdownify  # GafComment: Convert Markdown to HTML using markdownify
 
 # Optional OpenCLIP import for image embeddings
 try:
@@ -250,7 +250,7 @@ def sol_home():
 
     session['history'] = (session['history'] + [{'role': 'assistant', 'content': reply_md}])[-20:]
 
-    reply_html = markdown(reply_md, extensions=['extra', 'nl2br'])
+    reply_html = markdownify.markdownify(reply_md, heading_style="ATX")  # GafComment: Use markdownify for conversion
     sources_html = []
     if drive_sources:
         sources_html.append('<h4>Drive Sources</h4>' + '<br>'.join(f'[{i+1}] {s}' for i, s in enumerate(drive_sources)))
