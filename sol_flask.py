@@ -84,19 +84,19 @@ except Exception as e:
 
 # --- HELPERS ---
 def brave_search(query):
-    """Perform a web search via Brave API"""
+    """Perform a web search via Brave API using GET instead of POST"""
     headers = {
         "Accept": "application/json",
         "X-Subscription-Token": os.getenv("BRAVE_API_KEY")
     }
     params = {"q": query, "count": 5, "freshness": "day"}
     try:
-        resp = requests.post(
+        resp = requests.get(
             "https://api.search.brave.com/res/v1/web/search",
             headers=headers,
-            json=params,
+            params=params,
             timeout=5
-        )
+        )  # GafComment: Use GET to avoid 405
         resp.raise_for_status()
         results = []
         for idx, item in enumerate(resp.json().get("web", {}).get("results", []), start=1):
