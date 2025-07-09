@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import chromadb
 from chromadb.utils import embedding_functions
 from bs4 import BeautifulSoup
-import markdownify
+from markdown import markdown  # GafComment: Convert Markdown to HTML
 import logging
 import threading
 
@@ -162,31 +162,35 @@ try:
 except Exception as e:
     logger.warning(f"Failed to fetch UI template: {e}")
     try:
-        page_html = open(os.path.join(os.path.dirname(__file__), 'templates', 'sol.html')).read()
+        page_html = open(os.path.join(os.getcwd(), 'templates', 'sol.html')).read()
     except Exception:
         page_html = "<!-- sol.html unavailable -->"
 
 # --- HELPERS ---
 def brave_search(query):
-    headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  # GafComment: Use GET
+    """Returns list of web search results as dicts"""
+    headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  
     params = {"q": query[:200], "count": 5, "freshness": "day"}
     try:
-        resp = requests.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            headers=headers,
-            params=params,
-            timeout=5
-        )
+        resp = requests.get("https://api.search.brave.com/res/v1/web/search",
+                            headers=headers, params=params, timeout=5)
         resp.raise_for_status()
         items = resp.json().get("web", {}).get("results", []) or []
-        results = [
-            f"{idx+1}. {item.get('title','')} — {item.get('url','')}\n{item.get('description','')}"
-            for idx, item in enumerate(items)
-        ]
-        return "\n\n".join(results)
+        return [{
+            "title": i.get("title"),
+            "url": i.get("url"),
+            "description": i.get("description")
+        } for i in items]
     except Exception as e:
         logger.error(f"Brave search failed: {e}")
-        return "[Brave search unavailable]"
+        return []
+
+# Format structured citations for Brave results
+def format_brave_html(results):
+    lines = []
+    for idx, r in enumerate(results, start=1):
+        lines.append(f"<p><strong>[{idx}] <a href=\"{r['url']}\" target=\"_blank\" rel=\"noopener\">{r['title']}</a></strong><br>{r['description']}</p>")
+    return "".join(lines)
 
 # --- FLASK APP SETUP ---
 app = Flask(__name__)
@@ -200,7 +204,7 @@ def password_gate():
         if pw == os.getenv("SOL_GPT_PASSWORD"):
             session["authenticated"] = True
             return redirect(url_for("sol_home"))
-    return render_template("index.html")  # GafComment: Local copy of login page
+    return render_template("index.html")
 
 @app.route("/chat", methods=["GET", "POST"])
 def sol_home():
@@ -212,77 +216,86 @@ def sol_home():
     user_msg = request.form.get("message", "").strip()
     uploaded_file = request.files.get("file")
 
-    # Append user message and trim history to last 20
+    # Session memory
     history = session.setdefault("history", [])
     history.append({"role": "user", "content": user_msg})
     session["history"] = history[-20:]
 
-    # Drive RAG context
-    drive_context = ""
+    # RAG contexts
+    # Drive
+    drive_contexts, drive_sources = [], []
     if drive_service:
         try:
             res = text_collection.query(query_texts=[user_msg], n_results=3)
-            docs = res.get("documents", [[""]])[0]
-            metas = res.get("metadatas", [[{}]])[0]
-            drive_context = "\n\n".join(f"[{m.get('source','')}] {d}" for d, m in zip(docs, metas))
+            docs, metas = res.get("documents")[0], res.get("metadatas")[0]
+            for d,m in zip(docs,metas):
+                drive_contexts.append(d)
+                drive_sources.append(m.get("source"))
         except Exception as e:
-            logger.warning(f"Drive RAG query failed: {e}")
-
-    # Image context
-    image_context = ""
+            logger.warning(f"Drive RAG failed: {e}")
+    # Image
+    image_context, image_source = "", None
     if uploaded_file:
         try:
             img_data = uploaded_file.read()
             clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
-            embedding = clip_fn(img_data)
-            res = text_collection.query(query_embeddings=[embedding], n_results=1)
-            image_context = res.get("documents", [[""]])[0][0]
-        except Exception as img_err:
-            logger.warning(f"Image context RAG failed: {img_err}")
+            emb = clip_fn(img_data)
+            res = text_collection.query(query_embeddings=[emb], n_results=1)
+            image_context = res.get("documents")[0][0]
+            image_source = res.get("metadatas")[0][0].get("source")
+        except Exception as e:
+            logger.warning(f"Image RAG failed: {e}")
 
+    # Web search
     brave_results = brave_search(user_msg)
+    brave_html = format_brave_html(brave_results)
 
-    # Assemble prompt content
+    # Assemble prompt
     parts = [user_msg]
-    if drive_context:
-        parts.append(f"Drive Context:\n{drive_context}")
+    if drive_contexts:
+        parts.append("Drive Context:" + "\n\n".join(f"[{i+1}] {c}" for i,c in enumerate(drive_contexts)))
     if image_context:
-        parts.append(f"Image Context:\n{image_context}")
+        parts.append(f"Image Context from [{image_source}]:\n{image_context}")
     if brave_results:
-        parts.append(f"Web Search:\n{brave_results}")
-    content = "\n\n".join(parts)
+        parts.append("Web Search Results:")
+    prompt_text = "\n\n".join(parts)
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
+    # Build messages
+    messages = [{"role":"system","content":SYSTEM_PROMPT}] + session["history"]
 
+    # Call LLM
     start = time.time()
     try:
-        resp = requests.post(
+        res = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}", "Content-Type": "application/json"},
-            json={"model": "llama3-8b-8192", "messages": messages, "temperature": 0.6},
+            headers={"Authorization":f"Bearer {os.getenv('GROQ_API_KEY')}","Content-Type":"application/json"},
+            json={"model":"llama3-8b-8192","messages":messages,"temperature":0.6},
             timeout=30
         )
-        resp.raise_for_status()
-        reply_raw = resp.json()["choices"][0]["message"]["content"]
-        duration = time.time() - start
-
-        # Append assistant reply and trim history
-        hist = session.get("history", []) + [{"role": "assistant", "content": reply_raw}]
-        session["history"] = hist[-20:]
-
-        # Convert to safe HTML
-        htmlified = markdownify.markdownify(reply_raw, heading_style="ATX")
-        soup = BeautifulSoup(htmlified, "html.parser")
-        for a in soup.find_all("a"):
-            a["target"] = "_blank"
-            a["rel"] = "noopener noreferrer"
-
-        return jsonify({"reply": soup.decode(), "duration": f"[{duration:.2f}s]", "html": page_html})
+        res.raise_for_status()
+        reply_md = res.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        err_dur = time.time() - start
-        logger.error(f"Groq API call failed: {e}")
-        return jsonify({"reply": f"⚠️ Error: {e}", "duration": f"[{err_dur:.2f}s]", "html": page_html}), 500
+        logger.error(f"LLM call failed: {e}")
+        return jsonify({"reply":"⚠️ Error","duration":"[]","html":page_html}),500
+    duration = time.time()-start
+
+    # Trim history
+    session["history"] = (session["history"] + [{"role":"assistant","content":reply_md}])[-20:]
+
+    # Convert Markdown reply to HTML
+    reply_html = markdown(reply_md, extensions=["extra","nl2br"])
+    # Inject structured sources box
+    sources_html = []
+    if drive_sources:
+        sources_html.append("<h4>Drive Sources</h4>" + "<br>".join(f"[{i+1}] {s}" for i,s in enumerate(drive_sources)))
+    if image_source:
+        sources_html.append(f"<h4>Image Source</h4>[{image_source}]")
+    if brave_results:
+        sources_html.append(f"<h4>Web Sources</h4>{brave_html}")
+    structured_html = reply_html + "<hr>" + "".join(sources_html)
+
+    return jsonify({"reply":structured_html,"duration":f"[{duration:.2f}s]","html":page_html})
 
 # --- RUN APP ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=False)  # GafComment: Launch on port 10000, debug off for prod
+    app.run(host="0.0.0.0",port=10000,debug=False)  # GafComment: Launch on port 10000, debug off for prod
