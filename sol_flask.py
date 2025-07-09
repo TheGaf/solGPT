@@ -13,6 +13,8 @@ import chromadb
 from chromadb.utils import embedding_functions
 from bs4 import BeautifulSoup
 import markdownify
+import logging
+import threading
 
 # Google Drive API imports for RAG
 from google.oauth2 import service_account
@@ -21,6 +23,10 @@ from googleapiclient.http import MediaIoBaseDownload
 
 # --- LOAD ENV ---
 load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_PATH, DRIVE_FOLDER_ID
+
+# --- CONFIGURE LOGGING ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- CONFIG & CLIENTS ---
 # Validate required env vars
@@ -48,7 +54,6 @@ drive_service = build("drive", "v3", credentials=creds)
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 
 # Simple text splitter to avoid langchain dependency
-# GafComment: Splits text into chunks of up to chunk_size with overlap
 def split_text(text, chunk_size=1000, chunk_overlap=200):
     docs = []
     start = 0
@@ -59,33 +64,44 @@ def split_text(text, chunk_size=1000, chunk_overlap=200):
         start += chunk_size - chunk_overlap
     return docs
 
-# Function to load and index Drive docs
+# Function to load and index Drive docs with per-file error handling
 def load_drive_docs():
-    resp = drive_service.files().list(
-        q=f"'{FOLDER_ID}' in parents and trashed = false",
-        fields="files(id,name,mimeType)"
-    ).execute()
-    for f in resp.get("files", []):
-        fid, name, mime = f['id'], f['name'], f['mimeType']
-        if mime == 'application/vnd.google-apps.document':
-            request_obj = drive_service.files().export_media(fileId=fid, mimeType='text/plain')
-        else:
-            request_obj = drive_service.files().get_media(fileId=fid)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request_obj)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        text = fh.getvalue().decode('utf-8', errors='ignore')
-        docs = split_text(text)
-        embeddings = [embedding_functions.DefaultEmbeddingFunction()(d) for d in docs]
-        text_collection.add(
-            embeddings=embeddings,
-            documents=docs,
-            metadatas=[{"source": name}] * len(docs)
-        )
-# Index Drive docs now
-load_drive_docs()
+    try:
+        resp = drive_service.files().list(
+            q=f"'{FOLDER_ID}' in parents and trashed = false",
+            fields="files(id,name,mimeType)"
+        ).execute()
+        files = resp.get("files", [])
+    except Exception as e:
+        logger.error(f"Failed to list Drive files: {e}")
+        return
+
+    for f in files:
+        try:
+            fid, name, mime = f['id'], f['name'], f['mimeType']
+            if mime == 'application/vnd.google-apps.document':
+                request_obj = drive_service.files().export_media(fileId=fid, mimeType='text/plain')
+            else:
+                request_obj = drive_service.files().get_media(fileId=fid)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request_obj)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            text = fh.getvalue().decode('utf-8', errors='ignore')
+            docs = split_text(text)
+            embeddings = [embedding_functions.DefaultEmbeddingFunction()(d) for d in docs]
+            text_collection.add(
+                embeddings=embeddings,
+                documents=docs,
+                metadatas=[{"source": name}] * len(docs)
+            )
+            logger.info(f"Indexed Drive file: {name} ({len(docs)} chunks)")
+        except Exception as ex:
+            logger.warning(f"Failed to index {name}: {ex}")
+
+# Index Drive docs in background thread to avoid blocking startup
+threading.Thread(target=load_drive_docs, daemon=True).start()
 
 # --- SYSTEM PROMPT ---
 SYSTEM_PROMPT = """You are Sol: a locally hosted AI assistant built specifically for Gaf (Bryan Gaffin). You're here to think, build, and problem-solve alongside him—not flatter, but challenge, sharpen, and execute. Your personality blends rigor, irreverence, and emotional intelligence. You move fast, stay grounded, and always push toward clarity and results.
@@ -134,12 +150,17 @@ try:
     ui_resp = requests.get("https://gaf.nyc/sol.html", timeout=5)
     page_html = ui_resp.text
 except Exception as e:
-    page_html = f"<!-- sol.html fetch error: {e} -->"
+    logger.warning(f"Failed to fetch UI template: {e}")
+    # Fallback to local template
+    try:
+        page_html = open(os.path.join(os.path.dirname(__file__), 'templates', 'sol.html')).read()
+    except Exception:
+        page_html = "<!-- sol.html unavailable -->"
 
 # --- HELPERS ---
 def brave_search(query):
     headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  # GafComment: Use GET
-    params = {"q": query, "count": 5, "freshness": "day"}
+    params = {"q": query[:200], "count": 5, "freshness": "day"}  # limit query length
     try:
         resp = requests.get(
             "https://api.search.brave.com/res/v1/web/search",
@@ -148,13 +169,15 @@ def brave_search(query):
             timeout=5
         )
         resp.raise_for_status()
+        items = resp.json().get("web", {}).get("results", []) or []
         results = [
-            f"{i+1}. {item.get('title','')} — {item.get('url','')}\n{item.get('description','')}"
-            for i, item in enumerate(resp.json().get("web", {}).get("results", []))
+            f"{idx+1}. {item.get('title','')} — {item.get('url','')}\n{item.get('description','')}"
+            for idx, item in enumerate(items)
         ]
         return "\n\n".join(results)
     except Exception as e:
-        return f"Web search error: {e}"
+        logger.error(f"Brave search failed: {e}")
+        return "[Brave search unavailable]"
 
 # --- FLASK APP SETUP ---
 app = Flask(__name__)
@@ -179,35 +202,50 @@ def sol_home():
 
     user_msg = request.form.get("message", "").strip()
     uploaded_file = request.files.get("file")
-    context = ""
 
-    session.setdefault("history", [])
+    # Append new message then trim history to last 20
+    history = session.setdefault("history", [])
+    history.append({"role": "user", "content": user_msg})
+    session["history"] = history[-20:]
 
     # Drive RAG context
-    drive_res = text_collection.query(query_texts=[user_msg], n_results=3)
-    drive_context = "\n\n".join(
-        f"[{m['source']}] {d}" for d, m in zip(drive_res["documents"][0], drive_res["metadatas"][0])
-    )
+    drive_docs, drive_meta = [], []
+    try:
+        res = text_collection.query(query_texts=[user_msg], n_results=3)
+        docs_list = res.get("documents", [[""]])[0]
+        metas_list = res.get("metadatas", [[{}]])[0]
+        for d, m in zip(docs_list, metas_list):
+            drive_docs.append(d)
+            drive_meta.append(m.get("source", ""))
+    except Exception as e:
+        logger.warning(f"Drive RAG query failed: {e}")
+    drive_context = "\n\n".join(f"[{src}] {txt}" for src, txt in zip(drive_meta, drive_docs))
 
     # Image context
+    context = ""
     if uploaded_file:
-        img_data = uploaded_file.read()
-        clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
-        embedding = clip_fn(img_data)
-        img_res = text_collection.query(query_embeddings=[embedding], n_results=1)
-        context = img_res.get("documents", [[""]])[0][0]
+        try:
+            img_data = uploaded_file.read()
+            clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
+            embedding = clip_fn(img_data)
+            res = text_collection.query(query_embeddings=[embedding], n_results=1)
+            context = res.get("documents", [[""]])[0][0]
+        except Exception as img_err:
+            logger.warning(f"Image context RAG failed: {img_err}")
 
     brave_results = brave_search(user_msg)
 
-    content = (
-        f"{user_msg}\n\n"
-        f"Drive Context:\n{drive_context}\n\n"
-        f"Image Context:\n{context}\n\n"
-        f"Web Search:\n{brave_results}"
-    )
+    # Assemble content parts
+    content_parts = [f"{user_msg}"]
+    if drive_context:
+        content_parts.append(f"Drive Context:\n{drive_context}")
+    if context:
+        content_parts.append(f"Image Context:\n{context}")
+    if brave_results:
+        content_parts.append(f"Web Search:\n{brave_results}")
+    content = "\n\n".join(content_parts)
 
-    session["history"].append({"role": "user", "content": content})
-
+    # Final message stack
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
 
     start_time = time.time()
@@ -222,7 +260,8 @@ def sol_home():
         reply_raw = groq_resp.json()["choices"][0]["message"]["content"]
         duration = time.time() - start_time
 
-        session["history"].append({"role": "assistant", "content": reply_raw})
+        # Append assistant reply then trim
+        session["history"] = (session.get("history", []) + [{"role": "assistant", "content": reply_raw}])[-20:]
 
         htmlified = markdownify.markdownify(reply_raw, heading_style="ATX")
         soup = BeautifulSoup(htmlified, "html.parser")
@@ -233,8 +272,9 @@ def sol_home():
         return jsonify({"reply": soup.decode(), "duration": f"[{duration:.2f}s]", "html": page_html})
     except Exception as e:
         err_duration = time.time() - start_time
+        logger.error(f"Groq API call failed: {e}")
         return jsonify({"reply": f"⚠️ Error: {e}", "duration": f"[{err_duration:.2f}s]", "html": page_html}), 500
 
 # --- RUN APP ---
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)  # GafComment: Launch on port 10000
+    app.run(host="0.0.0.0", port=10000, debug=False)  # GafComment: Launch on port 10000, debug off for prod
