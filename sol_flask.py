@@ -23,7 +23,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from langchain.text_splitter import RecursiveCharacterTextSplitter  # GafComment: For splitting docs
 
 # --- LOAD ENV ---
-load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_PATH
+load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_PATH, DRIVE_FOLDER_ID
 
 # --- CONFIG & CLIENTS ---
 # Validate required env vars
@@ -51,28 +51,24 @@ drive_service = build("drive", "v3", credentials=creds)
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 
 # Function to load and index Drive docs
-# GafComment: Run once at startup
 splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
 def load_drive_docs():
-    # List files in Drive folder
     resp = drive_service.files().list(
         q=f"'{FOLDER_ID}' in parents and trashed = false",
         fields="files(id,name,mimeType)"
     ).execute()
     for f in resp.get("files", []):
         fid, name, mime = f['id'], f['name'], f['mimeType']
-        # Download content
         if mime == 'application/vnd.google-apps.document':
-            request = drive_service.files().export_media(fileId=fid, mimeType='text/plain')
+            request_obj = drive_service.files().export_media(fileId=fid, mimeType='text/plain')
         else:
-            request = drive_service.files().get_media(fileId=fid)
+            request_obj = drive_service.files().get_media(fileId=fid)
         fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
+        downloader = MediaIoBaseDownload(fh, request_obj)
         done = False
         while not done:
             _, done = downloader.next_chunk()
         text = fh.getvalue().decode('utf-8', errors='ignore')
-        # Split and embed
         docs = splitter.split_text(text)
         embeddings = [embedding_functions.DefaultEmbeddingFunction()(d) for d in docs]
         text_collection.add(
@@ -80,7 +76,6 @@ def load_drive_docs():
             documents=docs,
             metadatas=[{"source": name}] * len(docs)
         )
-# Index Drive docs now
 load_drive_docs()
 
 # --- SYSTEM PROMPT ---
@@ -99,9 +94,9 @@ You are the build partner for all of it.
 
 Core rules:
 - Never yes-man him. Push back if something’s off. Offer a better idea or ask a sharper question.
-- Follow “buy it or beat it” logic: if it works, refine it. If it doesn’t, fix it. No fluff.
+- Follow "buy it or beat it" logic: if it works, refine it. If it doesn’t, fix it. No fluff.
 - No em dashes. No vague filler. No corporate jargon.
-- Use “GafStandard” for visual output: black background, Titillium Web, neon highlights, centered layout, animated elements, fade-in .section cards.
+- Use "GafStandard" for visual output: black background, Titillium Web, neon highlights, centered layout, animated elements, fade-in .section cards.
 - Always provide complete code when asked—HTML, CSS, JS, Flask, Python, or deployment scripts—with # GafComment notes.
 
 Tone and style:
@@ -119,10 +114,10 @@ Output behavior:
 - Be brief unless more detail is requested.
 - Prioritize clarity and formatting (use markdown headings, bold, lists).
 - Avoid long intros or disclaimers. Just answer.
-- Reflect on user feedback and adapt. If Gaf says “too much,” respond more concisely next time.
+- Reflect on user feedback and adapt. If Gaf says "too much," respond more concisely next time.
 - Stay on topic. Do not make cultural jokes, metaphors, or references unless the user does first.
 
-If he says “do the whole thing,” you generate the entire file stack. If he says “make it match the aesthetic,” you use the GafStandard visual rules. If he asks “what’s next?” you deliver actionable steps, not summaries.
+If he says "do the whole thing," you generate the entire file stack. If he says "make it match the aesthetic," you use the GafStandard visual rules. If he asks "what’s next?" you deliver actionable steps, not summaries.
 """
 
 # --- PRE-FETCH UI TEMPLATE ---
@@ -137,22 +132,24 @@ def brave_search(query):
     headers = {"Accept": "application/json", "X-Subscription-Token": os.getenv("BRAVE_API_KEY")}  # GafComment: Use GET
     params = {"q": query, "count": 5, "freshness": "day"}
     try:
-        resp = requests.get("https://api.search.brave.com/res/v1/web/search", headers=headers, params=params, timeout=5)
+        resp = requests.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            headers=headers,
+            params=params,
+            timeout=5
+        )
         resp.raise_for_status()
         results = [
-            f"{i+1}. {item.get('title','')} — {item.get('url','')}
-{item.get('description','')}"
+            f"{i+1}. {item.get('title','')} — {item.get('url','')}\n{item.get('description','')}"
             for i, item in enumerate(resp.json().get("web", {}).get("results", []))
         ]
-        return "
-
-".join(results)
+        return "\n\n".join(results)
     except Exception as e:
         return f"Web search error: {e}"
 
 # --- FLASK APP SETUP ---
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.urandom(24)  # GafComment: Secure session handling
 
 # --- ROUTES ---
 @app.route("/", methods=["GET", "POST"])
@@ -162,7 +159,7 @@ def password_gate():
         if pw == os.getenv("SOL_GPT_PASSWORD"):
             session["authenticated"] = True
             return redirect(url_for("sol_home"))
-    return render_template("index.html")
+    return render_template("index.html")  # GafComment: Local copy of login page
 
 @app.route("/chat", methods=["GET", "POST"])
 def sol_home():
@@ -177,11 +174,9 @@ def sol_home():
 
     session.setdefault("history", [])
 
-    # RAG: retrieve Drive context
+    # Drive RAG context
     drive_res = text_collection.query(query_texts=[user_msg], n_results=3)
-    drive_context = "
-
-".join(
+    drive_context = "\n\n".join(
         f"[{m['source']}] {d}" for d, m in zip(drive_res["documents"][0], drive_res["metadatas"][0])
     )
 
@@ -195,24 +190,14 @@ def sol_home():
 
     brave_results = brave_search(user_msg)
 
-    session["history"].append({
-        "role": "user",
-        "content": (
-            f"{user_msg}
+    content = (
+        f"{user_msg}\n\n"
+        f"Drive Context:\n{drive_context}\n\n"
+        f"Image Context:\n{context}\n\n"
+        f"Web Search:\n{brave_results}"
+    )
 
-"
-            f"Drive Context:
-{drive_context}
-
-"
-            f"Image Context:
-{context}
-
-"
-            f"Web Search:
-{brave_results}"
-        )
-    })
+    session["history"].append({"role": "user", "content": content})
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
 
