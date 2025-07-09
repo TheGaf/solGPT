@@ -7,6 +7,7 @@ import os
 import time
 import base64
 import io
+import json  # GafComment: For loading credentials from env
 import requests  # GafComment: Single import for HTTP
 from dotenv import load_dotenv
 import chromadb
@@ -22,7 +23,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # --- LOAD ENV ---
-load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_PATH, DRIVE_FOLDER_ID
+load_dotenv()  # GafComment: Loads SOL_GPT_PASSWORD, BRAVE_API_KEY, GROQ_API_KEY, DRIVE_CRED_JSON, DRIVE_FOLDER_ID
 
 # --- CONFIGURE LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -45,20 +46,21 @@ text_collection = chroma_client.get_or_create_collection(
     embedding_function=embedding_functions.DefaultEmbeddingFunction()
 )
 
-# Google Drive setup for RAG (optional)
+# Google Drive setup for RAG (optional, via JSON in env var)
 drive_service = None
 FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
-_creds_path = os.getenv("DRIVE_CRED_PATH")
-if _creds_path and os.path.isfile(_creds_path) and FOLDER_ID:
+_creds_json = os.getenv("DRIVE_CRED_JSON")
+if _creds_json and FOLDER_ID:
     try:
         SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-        creds = service_account.Credentials.from_service_account_file(_creds_path, scopes=SCOPES)
+        info = json.loads(_creds_json)
+        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
         drive_service = build("drive", "v3", credentials=creds)
         logger.info("Google Drive RAG enabled.")
     except Exception as e:
         logger.warning(f"Google Drive credentials not loaded: {e}")
 else:
-    logger.info("Google Drive RAG disabled (missing creds or folder ID).")
+    logger.info("Google Drive RAG disabled (missing JSON creds or folder ID).")
 
 # Simple text splitter to avoid langchain dependency
 def split_text(text, chunk_size=1000, chunk_overlap=200):
@@ -159,7 +161,6 @@ try:
     page_html = ui_resp.text
 except Exception as e:
     logger.warning(f"Failed to fetch UI template: {e}")
-    # Fallback to local template
     try:
         page_html = open(os.path.join(os.path.dirname(__file__), 'templates', 'sol.html')).read()
     except Exception:
@@ -203,7 +204,7 @@ def password_gate():
 
 @app.route("/chat", methods=["GET", "POST"])
 def sol_home():
-    if request.method == "GET":  # Serve UI
+    if request.method == "GET":
         return page_html, 200
     if not session.get("authenticated"):
         return jsonify({"error": "Not authenticated"}), 401
@@ -211,7 +212,7 @@ def sol_home():
     user_msg = request.form.get("message", "").strip()
     uploaded_file = request.files.get("file")
 
-    # Append new message then trim history to last 20
+    # Append user message and trim history to last 20
     history = session.setdefault("history", [])
     history.append({"role": "user", "content": user_msg})
     session["history"] = history[-20:]
@@ -221,54 +222,55 @@ def sol_home():
     if drive_service:
         try:
             res = text_collection.query(query_texts=[user_msg], n_results=3)
-            dr_docs = res.get("documents", [[""]])[0]
-            dr_meta = res.get("metadatas", [[{}]])[0]
-            drive_context = "\n\n".join(f"[{m.get('source','')}] {d}" for d, m in zip(dr_docs, dr_meta))
+            docs = res.get("documents", [[""]])[0]
+            metas = res.get("metadatas", [[{}]])[0]
+            drive_context = "\n\n".join(f"[{m.get('source','')}] {d}" for d, m in zip(docs, metas))
         except Exception as e:
             logger.warning(f"Drive RAG query failed: {e}")
 
     # Image context
-    context = ""
+    image_context = ""
     if uploaded_file:
         try:
             img_data = uploaded_file.read()
             clip_fn = embedding_functions.OpenCLIPEmbeddingFunction()
             embedding = clip_fn(img_data)
             res = text_collection.query(query_embeddings=[embedding], n_results=1)
-            context = res.get("documents", [[""]])[0][0]
+            image_context = res.get("documents", [[""]])[0][0]
         except Exception as img_err:
             logger.warning(f"Image context RAG failed: {img_err}")
 
     brave_results = brave_search(user_msg)
 
-    # Assemble content parts
+    # Assemble prompt content
     parts = [user_msg]
     if drive_context:
         parts.append(f"Drive Context:\n{drive_context}")
-    if context:
-        parts.append(f"Image Context:\n{context}")
+    if image_context:
+        parts.append(f"Image Context:\n{image_context}")
     if brave_results:
         parts.append(f"Web Search:\n{brave_results}")
     content = "\n\n".join(parts)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + session["history"]
 
-    start_time = time.time()
+    start = time.time()
     try:
-        groq_resp = requests.post(
+        resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}", "Content-Type": "application/json"},
             json={"model": "llama3-8b-8192", "messages": messages, "temperature": 0.6},
             timeout=30
         )
-        groq_resp.raise_for_status()
-        reply_raw = groq_resp.json()["choices"][0]["message"]["content"]
-        duration = time.time() - start_time
+        resp.raise_for_status()
+        reply_raw = resp.json()["choices"][0]["message"]["content"]
+        duration = time.time() - start
 
-        # Append assistant reply then trim
+        # Append assistant reply and trim history
         hist = session.get("history", []) + [{"role": "assistant", "content": reply_raw}]
         session["history"] = hist[-20:]
 
+        # Convert to safe HTML
         htmlified = markdownify.markdownify(reply_raw, heading_style="ATX")
         soup = BeautifulSoup(htmlified, "html.parser")
         for a in soup.find_all("a"):
@@ -277,9 +279,9 @@ def sol_home():
 
         return jsonify({"reply": soup.decode(), "duration": f"[{duration:.2f}s]", "html": page_html})
     except Exception as e:
-        err_duration = time.time() - start_time
+        err_dur = time.time() - start
         logger.error(f"Groq API call failed: {e}")
-        return jsonify({"reply": f"⚠️ Error: {e}", "duration": f"[{err_duration:.2f}s]", "html": page_html}), 500
+        return jsonify({"reply": f"⚠️ Error: {e}", "duration": f"[{err_dur:.2f}s]", "html": page_html}), 500
 
 # --- RUN APP ---
 if __name__ == "__main__":
