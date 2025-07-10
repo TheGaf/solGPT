@@ -15,10 +15,17 @@ def chat_home():
         from main import page_html
         return page_html, 200
 
-    # Ensure we always define these
+    # POST: read the toggle and store it
+    show = request.form.get('show_sources', 'true') == 'true'
+    session['show_sources'] = show
+
+    # Now initialize defaults
     reply_text = "⚠️ Sorry, something went wrong."
     duration_str = ""
     structured_html = reply_text
+
+    # …rest of your POST logic…
+
 
     try:
         # 1) Authentication
