@@ -6,11 +6,10 @@ from flask_cors import CORS
 from config import SYSTEM_PROMPT, text_collection, drive_service, FOLDER_ID
 
 def create_app():
-    # 1) Create Flask app, pointing at your templates directory
     app = Flask(
         __name__,
-        template_folder="templates",  # <-- look here for index.html & sol.html
-        static_folder=None           # no static dir—everything is in templates
+        template_folder="templates",   # ← make sure Flask loads index.html & sol.html
+        static_folder=None
     )
 
     # 2) Secret key for session cookies
