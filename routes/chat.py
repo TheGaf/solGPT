@@ -35,11 +35,10 @@ def chat_home():
         else:
             return render_template('index.html', error="Incorrect password"), 401
 
-    # ———————————————————————————
-    # 3) Authenticated GET → serve chat UI
-    # ———————————————————————————
-    if request.method == 'GET':
-        return current_app.page_html, 200
+# 3) Authenticated GET → serve local sol.html
+if request.method == 'GET':
+    return render_template('sol.html'), 200
+
 
     # ———————————————————————————
     # 4) POST → handle a chat message
