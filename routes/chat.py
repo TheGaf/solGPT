@@ -6,7 +6,8 @@ import logging
 import os
 import requests
 import markdown2
-from config import SYSTEM_PROMPT, text_collection
+from config import SYSTEM_PROMPT, text_collection, drive_service, FOLDER_ID
+from rag.drive import load_drive_docs
 # … other imports …
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/chat')
@@ -21,6 +22,15 @@ def chat_home():
     # POST: read the toggle and store it
     show = request.form.get('show_sources', 'true') == 'true'
     session['show_sources'] = show
+
+    # Drive RAG: load matching chunks & source names
+    drive_contexts = []
+    drive_sources  = []
+    if show and drive_service and FOLDER_ID:
+        docs = load_drive_docs(drive_service, FOLDER_ID)
+        for text_chunk, source_name in docs[:3]:
+            drive_contexts.append(text_chunk)
+            drive_sources.append(source_name)
 
     # Initialize defaults
     reply_text = "⚠️ Sorry, something went wrong."
@@ -41,11 +51,17 @@ def chat_home():
         history.append({'role': 'user', 'content': user_msg})
         session['history'] = history[-20:]
 
-        # 4) Prepare RAG contexts...
-        #    (your existing drive, image, and web logic here)
+        # 4) Prepare user block with Drive snippets
+        user_block = user_msg
+        if drive_contexts:
+            snippet_text = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(drive_contexts))
+            user_block = f"{user_msg}\n\nDrive Snippets:\n{snippet_text}"
 
         # 5) Build LLM messages
-        messages = [{'role': 'system', 'content': SYSTEM_PROMPT}] + session['history']
+        messages = [
+            {'role': 'system', 'content': SYSTEM_PROMPT},
+            {'role': 'user',   'content': user_block}
+        ] + session['history']
 
         # 6) Call Groq
         start = time.time()
@@ -56,9 +72,9 @@ def chat_home():
                 "Content-Type": "application/json",
             },
             json={
-                "model":"llama3-8b-8192",
-                "messages":messages,
-                "temperature":0.6
+                "model": "llama3-8b-8192",
+                "messages": messages,
+                "temperature": 0.6
             },
             timeout=30
         )
@@ -75,12 +91,18 @@ def chat_home():
         # 8) Append sources if enabled
         sources = []
         if show:
-            # your existing source‐HTML builder here...
-            pass
+            if drive_sources:
+                cit = '<h4>Drive Sources</h4><ul>'
+                for src in dict.fromkeys(drive_sources):
+                    cit += f'<li>{src}</li>'
+                cit += '</ul>'
+                sources.append(cit)
+            # … include other source builders here …
+
         structured_html = reply_html + ('<hr>' + ''.join(sources) if sources else '')
 
         # 9) Save reply to history
-        session['history'].append({'role':'assistant','content':reply_md})
+        session['history'].append({'role': 'assistant', 'content': reply_md})
 
     except Exception:
         logging.exception("🔥 Unhandled error in /chat:")
