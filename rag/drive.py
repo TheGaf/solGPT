@@ -1,5 +1,8 @@
+# rag/drive.py
+
 import logging
 from io import BytesIO
+
 from googleapiclient.http import MediaIoBaseDownload
 import PyPDF2
 from helpers.text import split_text
@@ -17,8 +20,8 @@ def load_drive_docs(drive_service, folder_id):
     """
     results = []
     try:
-        # List files in the specified folder
-        query = f"'{folder_id}' in parents and trashed=false"
+        # 1. List files in the specified folder
+        query = f"'{folder_id}' in parents and trashed = false"
         response = drive_service.files().list(
             q=query,
             fields="files(id,name,mimeType)"
@@ -26,51 +29,53 @@ def load_drive_docs(drive_service, folder_id):
 
         for f in response.get('files', []):
             file_id = f['id']
-            name = f['name']
-            mime = f['mimeType']
-            content = ''
+            name    = f['name']
+            mime    = f['mimeType']
+            content = None
 
-            # Download plain text files
+            # 2. Download plain text files
             if mime == 'text/plain':
                 request = drive_service.files().get_media(fileId=file_id)
                 fh = BytesIO()
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done:
-                    status, done = downloader.next_chunk()
+                    _, done = downloader.next_chunk()
                 content = fh.getvalue().decode('utf-8', errors='ignore')
 
-            # Download and parse PDFs
+            # 3. Download and parse PDFs
             elif mime == 'application/pdf':
                 request = drive_service.files().get_media(fileId=file_id)
                 fh = BytesIO()
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
                 while not done:
-                    status, done = downloader.next_chunk()
+                    _, done = downloader.next_chunk()
                 fh.seek(0)
                 reader = PyPDF2.PdfReader(fh)
-                content = "\n".join(
-                    page.extract_text() or '' for page in reader.pages
-                )
+                pages = [page.extract_text() or '' for page in reader.pages]
+                content = "\n".join(pages)
 
-            # Export Google Docs as plain text
+            # 4. Export Google Docs as plain text
             elif mime == 'application/vnd.google-apps.document':
                 exported = drive_service.files().export(
                     fileId=file_id,
                     mimeType='text/plain'
                 ).execute()
                 content = exported.decode('utf-8', errors='ignore')
+
+            # 5. Skip unsupported types
             else:
-                # skip unsupported types
+                logging.debug(f"Skipping unsupported MIME type: {mime} for file {name}")
                 continue
 
-            # Chunk the content and record source name
-            chunks = split_text(content)
-            for chunk in chunks:
-                results.append((chunk, name))
+            # 6. Chunk the content and record source name
+            if content:
+                chunks = split_text(content)
+                for chunk in chunks:
+                    results.append((chunk, name))
 
     except Exception as e:
         logging.warning(f"Drive RAG failed: {e}")
 
-    return results
+    return results  # always a list (empty if any error)
