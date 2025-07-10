@@ -18,15 +18,11 @@ chat_bp = Blueprint('chat', __name__, url_prefix='/chat')
 
 @chat_bp.route('', methods=['GET', 'POST'])
 def chat_home():
-    # ———————————————————————————
     # 1) Unauthenticated GET → login form
-    # ———————————————————————————
     if request.method == 'GET' and not session.get('authenticated'):
         return render_template('index.html'), 200
 
-    # ———————————————————————————
     # 2) POST with password → auth check
-    # ———————————————————————————
     if request.method == 'POST' and 'password' in request.form:
         pw = request.form.get('password', '')
         if pw == os.getenv("SOL_GPT_PASSWORD"):
@@ -35,10 +31,9 @@ def chat_home():
         else:
             return render_template('index.html', error="Incorrect password"), 401
 
-# 3) Authenticated GET → serve local sol.html
-if request.method == 'GET':
-    return render_template('sol.html'), 200
-
+    # 3) Authenticated GET → serve chat UI
+    if request.method == 'GET':
+        return render_template('sol.html'), 200
 
     # ———————————————————————————
     # 4) POST → handle a chat message
