@@ -16,8 +16,8 @@ chat_bp = Blueprint('chat', __name__, url_prefix='/chat')
 def chat_home():
     # GET serves the UI
     if request.method == 'GET':
-        from main import page_html
-        return page_html, 200
+        from flask import current_app
+        return current_app.page_html, 200
 
     # POST: read the toggle and store it
     show = request.form.get('show_sources', 'true') == 'true'
