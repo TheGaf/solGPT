@@ -33,7 +33,7 @@ def chat_home():
         return jsonify({'reply': "Understood: I'll hide sources unless you ask.", 'duration': '', 'html': None})
     if 'show sources' in lower:
         session['show_sources'] = True
-        return jsonify({'reply': 'Got it: I'll show sources again.', 'duration': '', 'html': None})
+        return jsonify({'reply': "Got it: I'll show sources again.", 'duration': '', 'html': None})
 
     show = session.get('show_sources', True)
 
