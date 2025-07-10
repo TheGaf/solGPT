@@ -14,8 +14,7 @@ from config import SYSTEM_PROMPT, text_collection, drive_service, FOLDER_ID
 from rag.drive import load_drive_docs
 
 chat_bp = Blueprint('chat', __name__, url_prefix='/chat')
-
-@chat_bp.route('', methods=['GET', 'POST'])
+@chat_bp.route('/', methods=['GET', 'POST'])
 def chat_home():
     # 1) GET + not authenticated → show login form
     if request.method == 'GET' and not session.get('authenticated'):
