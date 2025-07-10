@@ -30,10 +30,18 @@ def chat_home():
     # Toggle source display
     if 'stop showing me sources' in lower:
         session['show_sources'] = False
-        return jsonify({'reply': "Understood: I'll hide sources unless you ask.", 'duration': '', 'html': None})
+        return jsonify({
+            'reply': "Understood: I'll hide sources unless you ask.",
+            'duration': '',
+            'html': None
+        })
     if 'show sources' in lower:
         session['show_sources'] = True
-        return jsonify({'reply': "Got it: I'll show sources again.", 'duration': '', 'html': None})
+        return jsonify({
+            'reply': "Got it: I'll show sources again.",
+            'duration': '',
+            'html': None
+        })
 
     show = session.get('show_sources', True)
 
@@ -79,7 +87,7 @@ def chat_home():
         resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
-                "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
+                "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}" ,
                 "Content-Type": "application/json",
             },
             json={
