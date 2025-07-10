@@ -76,98 +76,100 @@
     </div>
   </div>
 
-  <script>
-    const chat            = document.getElementById('chat');
-    const input           = document.getElementById('inputBox');
-    const fileInput       = document.getElementById('fileUpload');
-    const fileNameDisplay = document.getElementById('fileNameDisplay');
+<script>
+  const chat            = document.getElementById('chat');
+  const input           = document.getElementById('inputBox');
+  const fileInput       = document.getElementById('fileUpload');
+  const fileNameDisplay = document.getElementById('fileNameDisplay');
 
-    // Show selected filename
-    fileInput.addEventListener('change', () => {
-      fileNameDisplay.textContent = fileInput.files.length
-        ? fileInput.files[0].name
-        : '';
-    });
+  // Show selected filename
+  fileInput.addEventListener('change', () => {
+    fileNameDisplay.textContent = fileInput.files.length
+      ? fileInput.files[0].name
+      : '';
+  });
 
-    function addMessage(msg, cls, time=null, isHTML=false) {
-      const b = document.createElement('div');
-      b.className = 'bubble ' + cls;
-      if (isHTML) b.innerHTML = msg;
-      else        b.textContent = msg;
-      chat.appendChild(b);
-      if (cls === 'sol' && time) {
-        const t = document.createElement('div');
-        t.className = 'timecode';
-        t.textContent = time;
-        chat.appendChild(t);
-      }
-      chat.scrollTop = chat.scrollHeight;
+  function addMessage(msg, cls, time = null, isHTML = false) {
+    const b = document.createElement('div');
+    b.className = 'bubble ' + cls;
+    if (isHTML) b.innerHTML = msg;
+    else        b.textContent = msg;
+    chat.appendChild(b);
+    if (cls === 'sol' && time) {
+      const t = document.createElement('div');
+      t.className = 'timecode';
+      t.textContent = time;
+      chat.appendChild(t);
+    }
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function sendMessage() {
+    const msg  = input.value.trim();
+    const file = fileInput.files[0];
+    if (!msg && !file) return;
+
+    if (msg) addMessage(msg, 'user');
+    if (file && file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        addMessage(
+          `<img src="${e.target.result}" style="max-width:100%;border-radius:6px;margin:6px 0;">`,
+          'user',
+          null,
+          true
+        );
+      };
+      reader.readAsDataURL(file);
     }
 
-    async function sendMessage(){
-      const msg  = input.value.trim();
-      const file = fileInput.files[0];
-      if (!msg && !file) return;
+    // clear inputs
+    input.value = '';
+    fileInput.value = '';
+    fileNameDisplay.textContent = '';
 
-      if (msg) addMessage(msg, 'user');
-      if (file && file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = e => {
-          addMessage(
-            `<img src="${e.target.result}" style="max-width:100%;border-radius:6px;margin:6px 0;">`,
-            'user',
-            null,
-            true
-          );
-        };
-        reader.readAsDataURL(file);
-      }
+    // prepare payload
+    const toggle = document.getElementById('toggleSources');
+    const fd = new FormData();
+    if (msg)  fd.append('message', msg);
+    if (file) fd.append('file', file);
+    fd.append('show_sources', toggle.checked);
 
-      // clear inputs
-      input.value = '';
-      fileInput.value = '';
-      fileNameDisplay.textContent = '';
+    // show blinking "thinking…" cursor
+    const c = document.createElement('div');
+    c.className = 'bubble sol';
+    c.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
+    chat.appendChild(c);
+    chat.scrollTop = chat.scrollHeight;
 
-      // prepare payload
-      const toggle = document.getElementById('toggleSources');
-      const fd = new FormData();
-      if (msg)  fd.append('message', msg);
-      if (file) fd.append('file', file);
-      fd.append('show_sources', toggle.checked);
+    try {
+      // POST to the same-origin /chat endpoint
+      const res = await fetch('/chat', {
+        method: 'POST',
+        body: fd
+      });
 
-      // show blinking "thinking…" cursor
-      const c = document.createElement('div');
-      c.className = 'bubble sol';
-      c.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
-      chat.appendChild(c);
-      chat.scrollTop = chat.scrollHeight;
+      const data = await res.json();
+      const now  = new Date().toLocaleTimeString([], {
+        hour:   '2-digit',
+        minute: '2-digit'
+      });
 
-try {
-    // 🔥 Change this line to your Render URL:
-    const res  = await fetch('https://sol-gpt-n1ed.onrender.com/chat', {
-      method: 'POST',
-      body: fd
-    });
-    const data = await res.json();
-    const now  = new Date().toLocaleTimeString([], {
-      hour:   '2-digit',
-      minute: '2-digit'
-    });
+      c.remove();
+      addMessage(data.reply, 'sol', now, true);
 
-    c.remove();
-    addMessage(data.reply, 'sol', now, true);
-  } catch (e) {
-    c.remove();
-    addMessage('⚠️ Could not connect to server.', 'sol');
+    } catch (e) {
+      c.remove();
+      addMessage('⚠️ Could not connect to server.', 'sol');
+    }
   }
-}
 
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-  </script>
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+</script>
 </body>
 </html>
