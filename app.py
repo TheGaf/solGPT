@@ -1,42 +1,44 @@
+# app.py
+
 import os
-from flask import Flask, redirect, url_for
+import logging
+import traceback
+
+from flask import Flask
 from flask_cors import CORS
+from config import GROQ_API_KEY  # just to force a crash early if missing
+from routes.chat import chat_bp
 
-def create_app():
-    app = Flask(
-        __name__,
-        template_folder="templates",
-        static_folder=None,
-    )
-    app.secret_key = os.getenv("SESSION_SECRET", os.urandom(24))
+# --- Initialize Flask ---
+app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev‐fallback-secret")  # for sessions
 
-    # Only allow AJAX POSTs to /chat/api
-    CORS(app, resources={r"/chat/api": {"origins": "*"}}, supports_credentials=True)
+# --- CORS (if your UI is served on the same domain you may not need this) ---
+CORS(app,
+     resources={r"/chat/*": {"origins": "*"}},
+     supports_credentials=True)
 
-    # Health check
-    @app.route("/healthz")
-    def healthz():
-        return "OK", 200
+# --- Register Blueprints ---
+app.register_blueprint(chat_bp)
 
-    # Root shows the password form
-    @app.route("/", methods=["GET", "POST"])
-    def index():
-        from flask import render_template, request, session, redirect
-        if request.method == "POST":
-            pw = request.form.get("password", "")
-            if pw == os.getenv("SOL_GPT_PASSWORD"):
-                session["authenticated"] = True
-                return redirect(url_for("chat.chat_ui"))
-            else:
-                return render_template("index.html", error="Incorrect password"), 401
-        return render_template("index.html"), 200
+# --- Health Endpoint for whole app ---
+@app.route("/healthz")
+def healthz():
+    return {"status": "ready"}, 200
 
-    # Register your chat blueprint
-    from routes.chat import chat_bp
-    app.register_blueprint(chat_bp)
-
-    return app
+# --- Global Error Catcher (just in case!) ---
+@app.errorhandler(Exception)
+def catch_all(err):
+    logging.error("Uncaught exception:\n%s", traceback.format_exc())
+    return {"error": "Server crashed", "details": str(err)}, 500
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", port=10000)
+    # Force early failure if your key is missing
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not set in environment")
+
+    port = int(os.environ.get("PORT", 5000))
+    logging.basicConfig(level=logging.INFO)
+    logging.info("Starting app on port %d", port)
+    app.run(host="0.0.0.0", port=port)
