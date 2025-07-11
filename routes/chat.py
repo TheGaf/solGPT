@@ -3,11 +3,13 @@
 import logging
 import os
 import traceback
+from datetime import datetime
 
 from flask import (
     Blueprint, request, jsonify, session,
     render_template, redirect, url_for
 )
+from config import SYSTEM_PROMPT, client, drive_service, FOLDER_ID
 
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
@@ -16,7 +18,7 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
     try:
-        # Initialize chat history in session
+        # Init session history
         if "history" not in session:
             session["history"] = []
 
@@ -32,41 +34,33 @@ def chat_ui():
         if not session.get("authenticated"):
             return render_template("index.html"), 200
 
-        # If authenticated, serve chat UI
+        # Authenticated → show chat UI
         return render_template("sol.html"), 200
 
-    except Exception as err:
-        # Log full traceback server-side
+    except Exception:
         logging.error("🚨 crash in chat_ui:\n%s", traceback.format_exc())
-        # Return the error message in the browser so you can see what's missing
         return (
-            f"<h1>UI Load Error</h1>"
-            f"<pre>{traceback.format_exc()}</pre>",
+            f"<h1>UI Load Error</h1><pre>{traceback.format_exc()}</pre>",
             500,
         )
 
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Allow health check and CORS preflight
+    # Allow health checks and CORS preflight
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
     try:
-        # Parse JSON or form data
+        # Parse incoming payload
         ctype = request.headers.get("Content-Type", "")
         if ctype.startswith("application/json"):
             data = request.get_json(force=True)
-        elif ctype.startswith("application/x-www-form-urlencoded"):
-            data = request.form.to_dict()
         else:
-            return (
-                jsonify({
-                    "error": "Unsupported Media Type",
-                    "details": f"Expected JSON or form data, got {ctype}"
-                }),
-                415,
-            )
+            return jsonify({
+                "error": "Unsupported Media Type",
+                "details": f"Expected JSON, got {ctype}"
+            }), 415
 
         # Auth guard
         if not session.get("authenticated"):
@@ -76,19 +70,43 @@ def chat_api():
                 "html": None
             }), 401
 
-        # Echo stub (replace with your Llama/Groq call)
-        user_msg = data.get("message", "").strip()
+        user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        reply_html = (
-            f"<p><strong>Echo:</strong> {user_msg}</p>"
-            f"<p><em>Show sources?</em> {show_sources}</p>"
+        # Append user to history
+        history = session.get("history", [])
+        history.append({"role": "user", "content": user_msg})
+
+        # Optionally: run RAG to augment SYSTEM_PROMPT with docs
+        # docs = load_drive_docs(drive_service, FOLDER_ID)
+        # (you can insert retrieved passages into the prompt here)
+
+        # Call the Llama model via Groq
+        response = client.predict(
+            SYSTEM_PROMPT,
+            messages=history,
+            model=os.getenv("GROQ_MODEL", "llama-2-7b-chat"),
+            max_tokens=512
         )
 
+        assistant_msg = response.generations[0].message or ""
+        duration      = f"[{response.latency:.2f}s]"
+
+        # Save assistant reply
+        history.append({"role": "assistant", "content": assistant_msg})
+        session["history"] = history
+
+        # Build HTML for UI
+        reply_html = f"<p>{assistant_msg}</p>"
+        if show_sources and getattr(response, "sources", None):
+            sources = "".join(f"<li>{src}</li>" for src in response.sources)
+            reply_html += f"<ul class='sources'>{sources}</ul>"
+
+        # Return the JSON the frontend expects
         return jsonify({
-            "reply": user_msg,
-            "html": reply_html,
-            "duration": "[0.00s]"
+            "reply": assistant_msg,
+            "html":  reply_html,
+            "duration": duration
         }), 200
 
     except Exception:
