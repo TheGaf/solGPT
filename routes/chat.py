@@ -22,6 +22,7 @@ def chat_ui():
     """
     # Handle login form
     if request.method == "POST" and "password" in request.form:
+        logging.info("Incoming chat request, JSON payload: %s", request.get_json())
         if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
             session["authenticated"] = True
             return redirect(url_for("chat.chat_ui"))
