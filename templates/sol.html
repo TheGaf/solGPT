@@ -144,10 +144,10 @@
 
     try {
       // POST to the same-origin /chat endpoint
-const res = await fetch('https://sol-gpt-n1ed.onrender.com/chat', {
-     method: 'POST',
-     body: fd
-   });
+const res = await fetch('/chat/api', {
+  method: 'POST',
+  body: fd
+});
 
       const data = await res.json();
       const now  = new Date().toLocaleTimeString([], {
