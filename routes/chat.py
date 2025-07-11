@@ -10,7 +10,8 @@ from flask import (
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
 
-@chat_bp.route("/", methods=["GET", "POST"])
+@chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
+
 def chat_ui():
     # Initialize chat history in session
     if 'history' not in session:
