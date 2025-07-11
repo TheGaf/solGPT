@@ -18,11 +18,11 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
     try:
-        # Init session history
+        # Initialize chat history in session
         if "history" not in session:
             session["history"] = []
 
-        # Handle login form
+        # Handle login form submission
         if request.method == "POST" and "password" in request.form:
             if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
                 session["authenticated"] = True
@@ -30,39 +30,40 @@ def chat_ui():
             else:
                 return render_template("index.html", error="Incorrect password"), 401
 
-        # If not authenticated, show login
+        # If not authenticated, show login page
         if not session.get("authenticated"):
             return render_template("index.html"), 200
 
-        # Authenticated → show chat UI
+        # If authenticated, serve the chat UI
         return render_template("sol.html"), 200
 
     except Exception:
         logging.error("🚨 crash in chat_ui:\n%s", traceback.format_exc())
         return (
-            f"<h1>UI Load Error</h1><pre>{traceback.format_exc()}</pre>",
+            "<h1>UI Load Error</h1>"
+            f"<pre>{traceback.format_exc()}</pre>",
             500,
         )
 
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Allow health checks and CORS preflight
+    # Health check and CORS preflight support
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
     try:
-        # Parse incoming payload
+        # Parse incoming JSON payload
         ctype = request.headers.get("Content-Type", "")
         if ctype.startswith("application/json"):
             data = request.get_json(force=True)
         else:
             return jsonify({
                 "error": "Unsupported Media Type",
-                "details": f"Expected JSON, got {ctype}"
+                "details": f"Expected application/json, got {ctype}"
             }), 415
 
-        # Auth guard
+        # Authentication guard
         if not session.get("authenticated"):
             return jsonify({
                 "reply": "Not authenticated",
@@ -70,18 +71,19 @@ def chat_api():
                 "html": None
             }), 401
 
+        # Extract user input
         user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        # Append user to history
+        # Append user message to history
         history = session.get("history", [])
         history.append({"role": "user", "content": user_msg})
 
-        # Optionally: run RAG to augment SYSTEM_PROMPT with docs
+        # Optional RAG step (uncomment when ready)
         # docs = load_drive_docs(drive_service, FOLDER_ID)
-        # (you can insert retrieved passages into the prompt here)
+        # integrate docs into SYSTEM_PROMPT or history here
 
-        # Call the Llama model via Groq
+        # Call the Groq Llama model
         response = client.predict(
             SYSTEM_PROMPT,
             messages=history,
@@ -89,20 +91,21 @@ def chat_api():
             max_tokens=512
         )
 
+        # Extract model reply and latency
         assistant_msg = response.generations[0].message or ""
         duration      = f"[{response.latency:.2f}s]"
 
-        # Save assistant reply
+        # Persist assistant reply in history
         history.append({"role": "assistant", "content": assistant_msg})
         session["history"] = history
 
-        # Build HTML for UI
+        # Build optional HTML snippet for the front end
         reply_html = f"<p>{assistant_msg}</p>"
         if show_sources and getattr(response, "sources", None):
-            sources = "".join(f"<li>{src}</li>" for src in response.sources)
-            reply_html += f"<ul class='sources'>{sources}</ul>"
+            sources_items = "".join(f"<li>{src}</li>" for src in response.sources)
+            reply_html += f"<ul class='sources'>{sources_items}</ul>"
 
-        # Return the JSON the frontend expects
+        # Return JSON payload
         return jsonify({
             "reply": assistant_msg,
             "html":  reply_html,
