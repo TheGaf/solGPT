@@ -1,48 +1,62 @@
+# routes/chat.py
+
 import time
 import logging
 import os
 import requests
 import markdown2
+
 from flask import (
-    Blueprint,
-    request,
-    jsonify,
-    session,
-    current_app,
-    render_template,
-    redirect,
-    url_for
+    Blueprint, request, jsonify, session,
+    render_template, redirect, url_for
 )
 from config import SYSTEM_PROMPT, drive_service, FOLDER_ID
 from rag.drive import load_drive_docs
 
-# no strict_slashes here—remove that unsupported kwarg
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
 
-# 1) GET /chat/ — serves the chat UI (sol.html)
-@chat_bp.route("/", methods=["GET"])
+@chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
+    """
+    GET  /chat/ → if not authenticated, show password form (index.html);
+                    otherwise show main UI (sol.html).
+    POST /chat/ → handle password submission.
+    """
+    # 1) If this is a password POST
+    if request.method == "POST" and "password" in request.form:
+        pw = request.form["password"]
+        if pw == os.getenv("SOL_GPT_PASSWORD"):
+            session["authenticated"] = True
+            return redirect(url_for("chat.chat_ui"))
+        else:
+            # bad password → re-render index.html with error message
+            return render_template("index.html", error="Incorrect password"), 401
+
+    # 2) If not yet logged in, show login form
     if not session.get("authenticated"):
-        return redirect(url_for("index"))
+        return render_template("index.html"), 200
+
+    # 3) Otherwise, serve your chat UI
     return render_template("sol.html"), 200
 
 
-# 2) POST /chat/api — your AJAX chat endpoint
 @chat_bp.route("/api", methods=["POST"])
 def chat_api():
+    """
+    POST /chat/api → your AJAX chat endpoint.
+    Expects form-data fields: message, file (optional), show_sources.
+    Returns JSON { reply: <HTML string>, duration: <seconds>, html: null }.
+    """
+    # Must be logged in
     if not session.get("authenticated"):
-        return jsonify({
-            "reply":    "Not authenticated",
-            "duration": "",
-            "html":     None
-        }), 401
+        return jsonify({"reply": "Not authenticated", "duration": "", "html": None}), 401
 
-    # read the "Show Sources" toggle
+    # read sources toggle
     show = request.form.get("show_sources", "true") == "true"
     session["show_sources"] = show
 
-    # prepare Drive RAG contexts
+    # optionally load RAG contexts from Drive
     drive_contexts, drive_sources = [], []
     if show and drive_service and FOLDER_ID:
         docs = load_drive_docs(drive_service, FOLDER_ID)
@@ -50,56 +64,53 @@ def chat_api():
             drive_contexts.append(chunk)
             drive_sources.append(src)
 
-    duration_str    = ""
+    duration_str = ""
     structured_html = "⚠️ Sorry, something went wrong."
 
     try:
-        # 1) get user message & update session history
+        # 1) Grab user message
         user_msg = request.form.get("message", "").strip()
-        history  = session.setdefault("history", [])
+
+        # 2) Update session history (keep last 20)
+        history = session.setdefault("history", [])
         history.append({"role": "user", "content": user_msg})
         session["history"] = history[-20:]
 
-        # 2) inject Drive snippets into the user prompt
+        # 3) Inject Drive snippets, if any
         user_block = user_msg
         if drive_contexts:
-            snips = "\n\n".join(f"[{i+1}] {c}"
-                                for i, c in enumerate(drive_contexts))
-            user_block += f"\n\nDrive Snippets:\n{snips}"
+            snippets = "\n\n".join(f"[{i+1}] {c}" for i, c in enumerate(drive_contexts))
+            user_block += f"\n\nDrive Snippets:\n{snippets}"
 
-        # 3) assemble messages for the LLM
+        # 4) Build messages payload
         messages = (
             [{"role": "system", "content": SYSTEM_PROMPT},
              {"role": "user",   "content": user_block}]
             + session["history"]
         )
 
-        # 4) call Groq
+        # 5) Call your LLM
         start = time.time()
-        resp  = requests.post(
+        resp = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
-                "Content-Type":  "application/json",
+                "Content-Type": "application/json",
             },
-            json={
-                "model":       "llama3-8b-8192",
-                "messages":    messages,
-                "temperature": 0.6
-            },
+            json={"model": "llama3-8b-8192", "messages": messages, "temperature": 0.6},
             timeout=30
         )
         resp.raise_for_status()
-        reply_md     = resp.json()["choices"][0]["message"]["content"]
+        reply_md = resp.json()["choices"][0]["message"]["content"]
         duration_str = f"[{time.time() - start:.2f}s]"
 
-        # 5) markdown → HTML
+        # 6) Markdown → HTML
         reply_html = markdown2.markdown(
             reply_md,
             extras=["fenced-code-blocks", "tables", "strike", "task_list"]
         )
 
-        # 6) build sources list if requested
+        # 7) Build sources list
         sources = []
         if show and drive_sources:
             cit = "<h4>Drive Sources</h4><ul>"
@@ -108,20 +119,18 @@ def chat_api():
             cit += "</ul>"
             sources.append(cit)
 
-        # 7) combine HTML + save to history
-        structured_html = reply_html + ("<hr>" + "".join(sources)
-                                       if sources else "")
-        session["history"].append({
-            "role":    "assistant",
-            "content": reply_md
-        })
+        # 8) Stitch together
+        structured_html = reply_html + ( "<hr>" + "".join(sources) if sources else "" )
+
+        # 9) Save assistant reply into history
+        session["history"].append({"role": "assistant", "content": reply_md})
 
     except Exception:
         logging.exception("🔥 Unhandled error in /chat/api:")
 
-    # 8) return JSON
+    # 10) Return JSON
     return jsonify({
-        "reply":    structured_html,
+        "reply": structured_html,
         "duration": duration_str,
-        "html":     None
+        "html": None
     }), 200
