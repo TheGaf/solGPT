@@ -18,11 +18,9 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
     try:
-        # Initialize chat history in session
         if "history" not in session:
             session["history"] = []
 
-        # Handle login form submission
         if request.method == "POST" and "password" in request.form:
             if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
                 session["authenticated"] = True
@@ -30,11 +28,9 @@ def chat_ui():
             else:
                 return render_template("index.html", error="Incorrect password"), 401
 
-        # If not authenticated, show login page
         if not session.get("authenticated"):
             return render_template("index.html"), 200
 
-        # If authenticated, serve the chat UI
         return render_template("sol.html"), 200
 
     except Exception:
@@ -48,12 +44,11 @@ def chat_ui():
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Health check and CORS preflight support
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
     try:
-        # Parse incoming JSON payload
+        # parse JSON
         ctype = request.headers.get("Content-Type", "")
         if ctype.startswith("application/json"):
             data = request.get_json(force=True)
@@ -63,7 +58,7 @@ def chat_api():
                 "details": f"Expected application/json, got {ctype}"
             }), 415
 
-        # Authentication guard
+        # auth check
         if not session.get("authenticated"):
             return jsonify({
                 "reply": "Not authenticated",
@@ -71,41 +66,35 @@ def chat_api():
                 "html": None
             }), 401
 
-        # Extract user input
         user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        # Append user message to history
+        # update history
         history = session.get("history", [])
         history.append({"role": "user", "content": user_msg})
 
-        # Optional RAG step (uncomment when ready)
-        # docs = load_drive_docs(drive_service, FOLDER_ID)
-        # integrate docs into SYSTEM_PROMPT or history here
-
-        # Call the Groq Llama model
-        response = client.predict(
-            SYSTEM_PROMPT,
-            messages=history,
+        # call Groq's chat endpoint instead of predict
+        response = client.chat(
             model=os.getenv("GROQ_MODEL", "llama-2-7b-chat"),
-            max_tokens=512
+            messages=history,
+            max_tokens=512,
+            temperature=0.7
         )
 
-        # Extract model reply and latency
-        assistant_msg = response.generations[0].message or ""
-        duration      = f"[{response.latency:.2f}s]"
+        # extract reply & latency
+        assistant_msg = response.choices[0].message.content
+        duration      = f"[{getattr(response, 'latency', 0):.2f}s]"
 
-        # Persist assistant reply in history
+        # persist
         history.append({"role": "assistant", "content": assistant_msg})
         session["history"] = history
 
-        # Build optional HTML snippet for the front end
+        # build HTML
         reply_html = f"<p>{assistant_msg}</p>"
         if show_sources and getattr(response, "sources", None):
-            sources_items = "".join(f"<li>{src}</li>" for src in response.sources)
-            reply_html += f"<ul class='sources'>{sources_items}</ul>"
+            items = "".join(f"<li>{src}</li>" for src in response.sources)
+            reply_html += f"<ul class='sources'>{items}</ul>"
 
-        # Return JSON payload
         return jsonify({
             "reply": assistant_msg,
             "html":  reply_html,
