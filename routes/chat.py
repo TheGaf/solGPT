@@ -1,74 +1,65 @@
 # routes/chat.py
 
-from flask import Blueprint, request, jsonify, session
-import time, logging, os
-import markdownify, requests
-from config import SYSTEM_PROMPT, text_collection
-# … other imports …
+import logging
+import os
+from flask import (
+    Blueprint, request, jsonify, session,
+    render_template, redirect, url_for
+)
 
-chat_bp = Blueprint('chat', __name__, url_prefix='/chat')
+chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
-@chat_bp.route('', methods=['GET','POST'])
-def chat_home():
-    # GET serves the UI
-    if request.method == 'GET':
-        from main import page_html
-        return page_html, 200
 
-    # Ensure we always define these
-    reply_text = "⚠️ Sorry, something went wrong."
-    duration_str = ""
-    structured_html = reply_text
+@chat_bp.route("/", methods=["GET", "POST"])
+def chat_ui():
+    # Initialize chat history in session
+    if 'history' not in session:
+        session['history'] = []
 
-    try:
-        # 1) Authentication
-        if not session.get('authenticated'):
-            return jsonify({'reply': 'Not authenticated', 'duration': '', 'html': None}), 401
+    """
+    GET  /chat → if not authenticated, show password page; otherwise serve sol.html
+    POST /chat → handle password form
+    """
+    # Handle login form
+    if request.method == "POST" and "password" in request.form:
+        if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
+            session["authenticated"] = True
+            return redirect(url_for("chat.chat_ui"))
+        else:
+            return render_template("index.html", error="Incorrect password"), 401
 
-        # 2) Gather inputs
-        user_msg = request.form.get('message', '').strip()
-        uploaded = request.files.get('file')
+    # Not authenticated → show login
+    if not session.get("authenticated"):
+        return render_template("index.html"), 200
 
-        # 3) Update history
-        history = session.setdefault('history', [])
-        history.append({'role': 'user', 'content': user_msg})
-        session['history'] = history[-20:]
+    # Authenticated → serve chat UI
+    return render_template("sol.html"), 200
 
-        # 4) Prepare RAG contexts...
-        # [drive_contexts, image_context, brave_html...]
 
-        # 5) Build LLM messages
-        messages = [{'role': 'system', 'content': SYSTEM_PROMPT}] + session['history']
+@chat_bp.route("/api", methods=["POST"])
+def chat_api():
+    """
+    POST /chat/api
+    A stub implementation that simply echoes back the "message" field.
+    """
+    # Guard: must be authenticated
+    if not session.get("authenticated"):
+        return jsonify({"reply": "Not authenticated", "duration": "", "html": None}), 401
 
-        # 6) Call Groq
-        start = time.time()
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('GROQ_API_KEY')}",
-                "Content-Type": "application/json",
-            },
-            json={"model":"llama3-8b-8192","messages":messages,"temperature":0.6},
-            timeout=30
-        )
-        resp.raise_for_status()
-        reply_md = resp.json()['choices'][0]['message']['content']
-        duration_str = f"[{time.time() - start:.2f}s]"
+    # Grab message & toggle
+    user_msg = request.form.get("message", "")
+    show_sources = request.form.get("show_sources", "true")
+    session["show_sources"] = (show_sources == "true")
 
-        # 7) Convert to HTML + append sources
-        reply_html = markdownify.markdownify(reply_md, heading_style="ATX")
-        sources = []  # build your sources html here
-        structured_html = reply_html + ('<hr>' + ''.join(sources) if sources else '')
+    # Build a simple HTML reply
+    reply_html = (
+        f"<p><strong>Echo:</strong> {user_msg!s}</p>"
+        f"<p><em>Show sources?</em> {show_sources}</p>"
+    )
 
-        # 8) Save reply to history
-        session['history'].append({'role':'assistant','content':reply_md})
-
-    except Exception:
-        logging.exception("🔥 Unhandled error in /chat:")
-
-    # Always return 200 with a JSON payload
+    # Return JSON
     return jsonify({
-        'reply': structured_html,
-        'duration': duration_str,
-        'html': None
+        "reply": reply_html,
+        "duration": "[0.00s]",
+        "html": None
     }), 200
