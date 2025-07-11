@@ -42,76 +42,50 @@ def chat_ui():
         )
 
 
-@chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
+@chat_bp.route("/api", methods=["GET","POST","OPTIONS"])
 def chat_api():
-    if request.method in ("GET", "OPTIONS"):
-        return jsonify({"status": "ok"}), 200
+    if request.method in ("GET","OPTIONS"):
+        return jsonify({"status":"ok"}),200
 
     try:
-        # Parse JSON payload
-        ctype = request.headers.get("Content-Type", "")
-        if ctype.startswith("application/json"):
-            data = request.get_json(force=True)
-        else:
-            return jsonify({
-                "error": "Unsupported Media Type",
-                "details": f"Expected application/json, got {ctype}"
-            }), 415
+        # parse JSON
+        data = request.get_json(force=True)
 
-        # Auth guard
+        # auth guard
         if not session.get("authenticated"):
-            return jsonify({
-                "reply": "Not authenticated",
-                "duration": "",
-                "html": None
-            }), 401
+            return jsonify({"reply":"Not authenticated"}),401
 
-        # Get user inputs
-        user_msg     = data.get("message", "").strip()
-        show_sources = bool(data.get("show_sources", False))
+        user_msg = data.get("message","").strip()
+        show_sources = bool(data.get("show_sources",False))
 
-        # Update history
-        history = session.get("history", [])
-        history.append({"role": "user", "content": user_msg})
+        history = session.setdefault("history",[])
+        history.append({"role":"user","content":user_msg})
 
-        # (Optional) RAG hook:
-        # docs = load_drive_docs(drive_service, FOLDER_ID)
-        # incorporate docs into SYSTEM_PROMPT or history here
+        # pick model
+        model_name = os.getenv("GROQ_MODEL","").strip() or "llama-2-7b-chat"
 
-        # Call Groq Chat Completions
+        # call Groq
         chat_completion = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", "llama-2-7b-chat"),
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT}
-            ] + history,
+            model=model_name,
+            messages=[{"role":"system","content":SYSTEM_PROMPT}] + history,
             max_tokens=512,
             temperature=0.7
         )
 
         assistant_msg = chat_completion.choices[0].message.content
-        # Groq SDK doesn’t directly expose latency; omit or custom-measure if needed
-        duration = f"[{datetime.utcnow().isoformat()}]"
+        duration = "[%.2fs]" % getattr(chat_completion, "latency", 0.0)
 
-        # Persist assistant reply
-        history.append({"role": "assistant", "content": assistant_msg})
+        history.append({"role":"assistant","content":assistant_msg})
         session["history"] = history
 
-        # Build HTML for front end
         reply_html = f"<p>{assistant_msg}</p>"
-        if show_sources and getattr(chat_completion, "sources", None):
-            items = "".join(f"<li>{src}</li>" for src in chat_completion.sources)
+        if show_sources and getattr(chat_completion, "sources",None):
+            items = "".join(f"<li>{s}</li>" for s in chat_completion.sources)
             reply_html += f"<ul class='sources'>{items}</ul>"
 
-        return jsonify({
-            "reply": assistant_msg,
-            "html":  reply_html,
-            "duration": duration
-        }), 200
+        return jsonify({"reply":assistant_msg,"html":reply_html,"duration":duration}),200
 
     except Exception:
-        logging.error("Error in /chat/api:\n%s", traceback.format_exc())
+        logging.error("Error calling model %r:\n%s", model_name, traceback.format_exc())
         last = traceback.format_exc().splitlines()[-1]
-        return jsonify({
-            "error": "Internal server error",
-            "details": last
-        }), 500
+        return jsonify({"error":"Internal server error","details":f"{last} (model={model_name})"}),500
