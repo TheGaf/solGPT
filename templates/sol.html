@@ -13,7 +13,6 @@
   <link rel="stylesheet" href="https://gaf.nyc/gaf_solstandards.css" />
 
   <style>
-    /* blinking "thinking…" cursor effect */
     .blinking-cursor {
       font-weight: bold;
       color: #59DCFF;
@@ -23,8 +22,6 @@
       0%, 100% { opacity: 1; }
       50%      { opacity: 0; }
     }
-
-    /* right-align the Send button */
     .send-btn {
       width: 100px;
       margin-left: auto;
@@ -34,7 +31,6 @@
 </head>
 <body>
   <div class="app">
-    <!-- header -->
     <div class="header">
       <img src="https://gaf.nyc/sol_v1.png" alt="SOL AI" class="logo" />
       <a href="https://gaf.nyc" target="_blank" rel="noopener">
@@ -42,7 +38,6 @@
       </a>
     </div>
 
-    <!-- toggle sources -->
     <div class="input-block">
       <label>
         <input type="checkbox" id="toggleSources" checked />
@@ -50,10 +45,8 @@
       </label>
     </div>
 
-    <!-- chat history -->
     <div class="chat-box" id="chat"></div>
 
-    <!-- input area -->
     <div class="input-block">
       <textarea id="inputBox" class="input-text"
                 placeholder="Type your message…" autocomplete="off"></textarea>
@@ -61,88 +54,104 @@
     </div>
   </div>
 
-<script>
-  const chat       = document.getElementById('chat');
-  const inputBox   = document.getElementById('inputBox');
-  const sendBtn    = document.getElementById('sendBtn');
-  const toggleSrc  = document.getElementById('toggleSources');
+  <script>
+    const chat      = document.getElementById('chat');
+    const inputBox  = document.getElementById('inputBox');
+    const sendBtn   = document.getElementById('sendBtn');
+    const toggleSrc = document.getElementById('toggleSources');
 
-  function addMessage(msg, cls, time = null, isHTML = false) {
-    const b = document.createElement('div');
-    b.className = 'bubble ' + cls;
-    if (isHTML) b.innerHTML = msg;
-    else        b.textContent = msg;
-    chat.appendChild(b);
+    function addMessage(msg, cls, time = null, isHTML = false) {
+      const b = document.createElement('div');
+      b.className = 'bubble ' + cls;
+      if (isHTML) b.innerHTML = msg;
+      else        b.textContent = msg;
+      chat.appendChild(b);
 
-    if (cls === 'sol' && time) {
-      const t = document.createElement('div');
-      t.className = 'timecode';
-      t.textContent = time;
-      chat.appendChild(t);
+      if (cls === 'sol' && time) {
+        const t = document.createElement('div');
+        t.className = 'timecode';
+        t.textContent = time;
+        chat.appendChild(t);
+      }
+      chat.scrollTop = chat.scrollHeight;
     }
-    chat.scrollTop = chat.scrollHeight;
-  }
 
-  async function sendMessage() {
-    const text = inputBox.value.trim();
-    if (!text) return;
+    async function sendMessage() {
+      const text = inputBox.value.trim();
+      if (!text) return;
 
-    // show user message
-    addMessage(text, 'user');
-    inputBox.value = '';
-    chat.scrollTop = chat.scrollHeight;
+      // Show user message
+      addMessage(text, 'user');
+      inputBox.value = '';
+      chat.scrollTop = chat.scrollHeight;
 
-    // show thinking cursor
-    const thinking = document.createElement('div');
-    thinking.className = 'bubble sol';
-    thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
-    chat.appendChild(thinking);
-    chat.scrollTop = chat.scrollHeight;
+      // Show thinking indicator
+      const thinking = document.createElement('div');
+      thinking.className = 'bubble sol';
+      thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
+      chat.appendChild(thinking);
+      chat.scrollTop = chat.scrollHeight;
 
-    try {
-      const res = await fetch('/chat/api', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          message: text,
-          show_sources: toggleSrc.checked
-        })
-      });
-
-      const data = await res.json();
-      thinking.remove();
-
-      if (!res.ok) {
-        console.error('Chat error', data);
-        addMessage('⚠️ ' + (data.error || 'Server error'), 'sol');
+      let res;
+      try {
+        res = await fetch('/chat/api', {
+          method: 'POST',
+          credentials: 'include',           // send session cookie
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: text,
+            show_sources: toggleSrc.checked
+          }),
+          redirect: 'manual'               // do not auto-follow redirects
+        });
+      } catch (netErr) {
+        console.error('Network error', netErr);
+        thinking.remove();
+        addMessage('⚠️ Could not connect to server.', 'sol');
         return;
       }
 
+      // If the server tries to redirect (e.g. back to /chat/ for login)
+      if (res.status === 302 || res.redirected) {
+        window.location.href = '/chat/';
+        return;
+      }
+
+      // Ensure we got JSON
+      const ctype = res.headers.get('Content-Type') || '';
+      if (!ctype.includes('application/json')) {
+        console.error('Expected JSON but got', ctype);
+        thinking.remove();
+        addMessage('⚠️ Server did not return JSON.', 'sol');
+        return;
+      }
+
+      const payload = await res.json();
+      thinking.remove();
+
+      if (!res.ok) {
+        console.error('Chat API error', payload);
+        addMessage('⚠️ ' + (payload.error || 'Server error'), 'sol');
+        return;
+      }
+
+      // Display assistant reply
       const now = new Date().toLocaleTimeString([], {
         hour:   '2-digit',
         minute: '2-digit'
       });
-
-      // display the assistant’s reply
-      addMessage(data.html || data.reply, 'sol', now, true);
-
-    } catch (err) {
-      thinking.remove();
-      console.error('Network error', err);
-      addMessage('⚠️ Could not connect to server.', 'sol');
+      addMessage(payload.html || payload.reply, 'sol', now, true);
     }
-  }
 
-  sendBtn.addEventListener('click', sendMessage);
-  inputBox.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
-</script>
+    sendBtn.addEventListener('click', sendMessage);
+    inputBox.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
 </body>
 </html>
