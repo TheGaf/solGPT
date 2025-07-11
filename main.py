@@ -10,14 +10,20 @@ from config import SYSTEM_PROMPT, drive_service, FOLDER_ID, client
 from routes.chat import chat_bp
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-fallback-secret")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev‐fallback-secret")
 
-# Enable CORS on the chat endpoints
+# Allow the session cookie to be sent via fetch(credentials: 'include')
+app.config.update(
+    SESSION_COOKIE_SAMESITE='None',   # allow cross-site or same-site requests
+    SESSION_COOKIE_SECURE=True,       # cookie only over HTTPS
+)
+
+# Enable CORS (with credentials) on /chat/*
 CORS(app,
      resources={r"/chat/*": {"origins": "*"}},
      supports_credentials=True)
 
-# Mount your /chat blueprint
+# Register the chat blueprint
 app.register_blueprint(chat_bp)
 
 # Redirect root to the chat UI
@@ -30,10 +36,9 @@ def root():
 def healthz():
     return {"status": "ready"}, 200
 
-# Global error catcher for everything else
+# Global error catcher
 @app.errorhandler(Exception)
 def catch_all(err):
-    # Do not mask 404s raised by Flask
     from werkzeug.exceptions import HTTPException
     if isinstance(err, HTTPException):
         return err, err.code
@@ -43,7 +48,6 @@ def catch_all(err):
 
 
 if __name__ == "__main__":
-    # Fail fast if the API key is missing
     if not os.getenv("GROQ_API_KEY"):
         raise RuntimeError("GROQ_API_KEY is not set in environment")
 
