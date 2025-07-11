@@ -145,11 +145,11 @@
     chat.scrollTop = chat.scrollHeight;
 
     try {
-      const res = await fetch('/chat/api', {
-        method: 'POST',
-        body: fd,
-        credentials: 'include'
-      });
+const res = await fetch('/chat/api', {
+  method: 'POST',
+  body: fd,
+  credentials: 'include'
+});
       const data = await res.json();
       const now  = new Date().toLocaleTimeString([], {
         hour:   '2-digit',
