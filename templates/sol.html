@@ -13,21 +13,6 @@
   <link rel="stylesheet" href="https://gaf.nyc/gaf_solstandards.css" />
 
   <style>
-    /* hide the native file input behind our pink "+" button */
-    .input-buttons > input[type="file"] {
-      display: none;
-    }
-
-    /* show the chosen filename next to "+" in small grey text */
-    #fileNameDisplay {
-      font-size: 0.9em;
-      color: #ccc;
-      max-width: 150px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
     /* blinking "thinking…" cursor effect */
     .blinking-cursor {
       font-weight: bold;
@@ -39,7 +24,7 @@
       50%      { opacity: 0; }
     }
 
-    /* right-align the Send button and give it a fixed width */
+    /* right-align the Send button */
     .send-btn {
       width: 100px;
       margin-left: auto;
@@ -72,26 +57,15 @@
     <div class="input-block">
       <textarea id="inputBox" class="input-text"
                 placeholder="Type your message…" autocomplete="off"></textarea>
-      <div class="input-buttons">
-        <label for="fileUpload" class="upload-btn">+</label>
-        <input type="file" id="fileUpload" name="file" accept="image/*" />
-        <span id="fileNameDisplay"></span>
-        <button class="send-btn" onclick="sendMessage()">Send</button>
-      </div>
+      <button class="send-btn" id="sendBtn">Send</button>
     </div>
   </div>
 
 <script>
-  const chat            = document.getElementById('chat');
-  const input           = document.getElementById('inputBox');
-  const fileInput       = document.getElementById('fileUpload');
-  const fileNameDisplay = document.getElementById('fileNameDisplay');
-
-  fileInput.addEventListener('change', () => {
-    fileNameDisplay.textContent = fileInput.files.length
-      ? fileInput.files[0].name
-      : '';
-  });
+  const chat       = document.getElementById('chat');
+  const inputBox   = document.getElementById('inputBox');
+  const sendBtn    = document.getElementById('sendBtn');
+  const toggleSrc  = document.getElementById('toggleSources');
 
   function addMessage(msg, cls, time = null, isHTML = false) {
     const b = document.createElement('div');
@@ -99,6 +73,7 @@
     if (isHTML) b.innerHTML = msg;
     else        b.textContent = msg;
     chat.appendChild(b);
+
     if (cls === 'sol' && time) {
       const t = document.createElement('div');
       t.className = 'timecode';
@@ -109,61 +84,60 @@
   }
 
   async function sendMessage() {
-    const msg  = input.value.trim();
-    const file = fileInput.files[0];
-    if (!msg && !file) return;
+    const text = inputBox.value.trim();
+    if (!text) return;
 
-    if (msg) addMessage(msg, 'user');
-    if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = e => {
-        addMessage(
-          `<img src="${e.target.result}" style="
-             max-width:100%;
-             border-radius:6px;
-             margin:6px 0;">`,
-          'user', null, true
-        );
-      };
-      reader.readAsDataURL(file);
-    }
+    // show user message
+    addMessage(text, 'user');
+    inputBox.value = '';
+    chat.scrollTop = chat.scrollHeight;
 
-    input.value = '';
-    fileInput.value = '';
-    fileNameDisplay.textContent = '';
-
-    const toggle = document.getElementById('toggleSources');
-    const fd = new FormData();
-    if (msg)  fd.append('message', msg);
-    if (file) fd.append('file', file);
-    fd.append('show_sources', toggle.checked);
-
-    const c = document.createElement('div');
-    c.className = 'bubble sol';
-    c.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
-    chat.appendChild(c);
+    // show thinking cursor
+    const thinking = document.createElement('div');
+    thinking.className = 'bubble sol';
+    thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
+    chat.appendChild(thinking);
     chat.scrollTop = chat.scrollHeight;
 
     try {
-const res = await fetch('/chat/api', {
-  method: 'POST',
-  body: fd,
-  credentials: 'include'
-});
+      const res = await fetch('/chat/api', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: text,
+          show_sources: toggleSrc.checked
+        })
+      });
+
       const data = await res.json();
-      const now  = new Date().toLocaleTimeString([], {
+      thinking.remove();
+
+      if (!res.ok) {
+        console.error('Chat error', data);
+        addMessage('⚠️ ' + (data.error || 'Server error'), 'sol');
+        return;
+      }
+
+      const now = new Date().toLocaleTimeString([], {
         hour:   '2-digit',
         minute: '2-digit'
       });
-      c.remove();
-      addMessage(data.reply, 'sol', now, true);
-    } catch (e) {
-      c.remove();
+
+      // display the assistant’s reply
+      addMessage(data.html || data.reply, 'sol', now, true);
+
+    } catch (err) {
+      thinking.remove();
+      console.error('Network error', err);
       addMessage('⚠️ Could not connect to server.', 'sol');
     }
   }
 
-  input.addEventListener('keydown', e => {
+  sendBtn.addEventListener('click', sendMessage);
+  inputBox.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -172,4 +146,3 @@ const res = await fetch('/chat/api', {
 </script>
 </body>
 </html>
-
