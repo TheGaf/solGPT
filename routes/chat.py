@@ -48,7 +48,7 @@ def chat_api():
         return jsonify({"status": "ok"}), 200
 
     try:
-        # parse JSON
+        # Parse JSON payload
         ctype = request.headers.get("Content-Type", "")
         if ctype.startswith("application/json"):
             data = request.get_json(force=True)
@@ -58,7 +58,7 @@ def chat_api():
                 "details": f"Expected application/json, got {ctype}"
             }), 415
 
-        # auth check
+        # Auth guard
         if not session.get("authenticated"):
             return jsonify({
                 "reply": "Not authenticated",
@@ -66,33 +66,40 @@ def chat_api():
                 "html": None
             }), 401
 
+        # Get user inputs
         user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        # update history
+        # Update history
         history = session.get("history", [])
         history.append({"role": "user", "content": user_msg})
 
-        # call Groq's chat endpoint instead of predict
-        response = client.chat(
+        # (Optional) RAG hook:
+        # docs = load_drive_docs(drive_service, FOLDER_ID)
+        # incorporate docs into SYSTEM_PROMPT or history here
+
+        # Call Groq Chat Completions
+        chat_completion = client.chat.completions.create(
             model=os.getenv("GROQ_MODEL", "llama-2-7b-chat"),
-            messages=history,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT}
+            ] + history,
             max_tokens=512,
             temperature=0.7
         )
 
-        # extract reply & latency
-        assistant_msg = response.choices[0].message.content
-        duration      = f"[{getattr(response, 'latency', 0):.2f}s]"
+        assistant_msg = chat_completion.choices[0].message.content
+        # Groq SDK doesn’t directly expose latency; omit or custom-measure if needed
+        duration = f"[{datetime.utcnow().isoformat()}]"
 
-        # persist
+        # Persist assistant reply
         history.append({"role": "assistant", "content": assistant_msg})
         session["history"] = history
 
-        # build HTML
+        # Build HTML for front end
         reply_html = f"<p>{assistant_msg}</p>"
-        if show_sources and getattr(response, "sources", None):
-            items = "".join(f"<li>{src}</li>" for src in response.sources)
+        if show_sources and getattr(chat_completion, "sources", None):
+            items = "".join(f"<li>{src}</li>" for src in chat_completion.sources)
             reply_html += f"<ul class='sources'>{items}</ul>"
 
         return jsonify({
