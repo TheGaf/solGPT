@@ -4,39 +4,47 @@ import os
 import logging
 import traceback
 
-from flask import Flask
+from flask import Flask, redirect, url_for
 from flask_cors import CORS
 from config import SYSTEM_PROMPT, drive_service, FOLDER_ID, client
-# remove any import of GROQ_API_KEY from config
+from routes.chat import chat_bp
 
-# --- Initialize Flask ---
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-fallback-secret")
 
-# --- CORS ---
+# Enable CORS on the chat endpoints
 CORS(app,
      resources={r"/chat/*": {"origins": "*"}},
      supports_credentials=True)
 
-# --- Register Blueprints ---
-from routes.chat import chat_bp
+# Mount your /chat blueprint
 app.register_blueprint(chat_bp)
 
-# --- Health Endpoint for whole app ---
+# Redirect root to the chat UI
+@app.route("/")
+def root():
+    return redirect(url_for("chat.chat_ui"))
+
+# Health-check endpoint
 @app.route("/healthz")
 def healthz():
     return {"status": "ready"}, 200
 
-# --- Global Error Catcher ---
+# Global error catcher for everything else
 @app.errorhandler(Exception)
 def catch_all(err):
+    # Do not mask 404s raised by Flask
+    from werkzeug.exceptions import HTTPException
+    if isinstance(err, HTTPException):
+        return err, err.code
+
     logging.error("Uncaught exception:\n%s", traceback.format_exc())
     return {"error": "Server crashed", "details": str(err)}, 500
 
+
 if __name__ == "__main__":
-    # Force early failure if your key is missing
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
+    # Fail fast if the API key is missing
+    if not os.getenv("GROQ_API_KEY"):
         raise RuntimeError("GROQ_API_KEY is not set in environment")
 
     port = int(os.environ.get("PORT", 5000))
