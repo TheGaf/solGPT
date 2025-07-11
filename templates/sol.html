@@ -27,6 +27,13 @@
       margin-left: auto;
       display: block;
     }
+    /* optional logout link */
+    .logout-link {
+      position: absolute;
+      top: 10px; right: 10px;
+      color: #fff; font-size: 0.9em;
+      text-decoration: underline; cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -36,6 +43,11 @@
       <a href="https://gaf.nyc" target="_blank" rel="noopener">
         <img src="https://gaf.nyc/BGtitle.svg" alt="BG Logo" class="logo" />
       </a>
+    </div>
+
+    <!-- small logout helper -->
+    <div class="logout-link" onclick="window.location.href='/chat/logout'">
+      Log out
     </div>
 
     <div class="input-block">
@@ -66,7 +78,6 @@
       if (isHTML) b.innerHTML = msg;
       else        b.textContent = msg;
       chat.appendChild(b);
-
       if (cls === 'sol' && time) {
         const t = document.createElement('div');
         t.className = 'timecode';
@@ -80,12 +91,10 @@
       const text = inputBox.value.trim();
       if (!text) return;
 
-      // Show user message
       addMessage(text, 'user');
       inputBox.value = '';
       chat.scrollTop = chat.scrollHeight;
 
-      // Show thinking indicator
       const thinking = document.createElement('div');
       thinking.className = 'bubble sol';
       thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
@@ -96,15 +105,13 @@
       try {
         res = await fetch('/chat/api', {
           method: 'POST',
-          credentials: 'include',           // send session cookie
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: text,
             show_sources: toggleSrc.checked
           }),
-          redirect: 'manual'               // do not auto-follow redirects
+          redirect: 'manual'
         });
       } catch (netErr) {
         console.error('Network error', netErr);
@@ -113,18 +120,11 @@
         return;
       }
 
-      // If the server tries to redirect (e.g. back to /chat/ for login)
-      if (res.status === 302 || res.redirected) {
-        window.location.href = '/chat/';
-        return;
-      }
-
-      // Ensure we got JSON
+      // If redirect or non-200, force logout & re-auth
       const ctype = res.headers.get('Content-Type') || '';
-      if (!ctype.includes('application/json')) {
-        console.error('Expected JSON but got', ctype);
-        thinking.remove();
-        addMessage('⚠️ Server did not return JSON.', 'sol');
+      if (res.status === 302 || res.redirected || res.status !== 200 || !ctype.includes('application/json')) {
+        console.warn('Unexpected response, logging out:', res.status, ctype);
+        window.location.href = '/chat/logout';
         return;
       }
 
@@ -137,7 +137,6 @@
         return;
       }
 
-      // Display assistant reply
       const now = new Date().toLocaleTimeString([], {
         hour:   '2-digit',
         minute: '2-digit'
