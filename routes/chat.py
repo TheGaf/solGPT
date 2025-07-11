@@ -27,8 +27,7 @@ def chat_ui():
             if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
                 session["authenticated"] = True
                 return redirect(url_for("chat.chat_ui"))
-            else:
-                return render_template("index.html", error="Incorrect password"), 401
+            return render_template("index.html", error="Incorrect password"), 401
 
         # If not authenticated, show login
         if not session.get("authenticated"):
@@ -42,13 +41,12 @@ def chat_ui():
         return (
             "<h1>UI Load Error</h1>"
             f"<pre>{traceback.format_exc()}</pre>",
-            500,
+            500
         )
 
 
 @chat_bp.route("/logout")
 def logout():
-    """Clear the session and return to the login page."""
     session.clear()
     return redirect(url_for("chat.chat_ui"))
 
@@ -62,13 +60,12 @@ def chat_api():
     try:
         # Parse JSON payload
         ctype = request.headers.get("Content-Type", "")
-        if ctype.startswith("application/json"):
-            data = request.get_json(force=True)
-        else:
+        if not ctype.startswith("application/json"):
             return jsonify({
                 "error": "Unsupported Media Type",
                 "details": f"Expected application/json, got {ctype}"
             }), 415
+        data = request.get_json(force=True)
 
         # Authentication guard
         if not session.get("authenticated"):
@@ -89,7 +86,7 @@ def chat_api():
         # Determine model name
         model_name = os.getenv("GROQ_MODEL", "").strip() or "llama3-8b-8192"
 
-        # Load top 3 Drive documents for RAG context
+        # — RAG STEP: load top 3 Drive docs for context
         docs = load_drive_docs(drive_service, FOLDER_ID)
         augmented_prompt = SYSTEM_PROMPT + "\n\n" + "\n\n".join(
             doc.page_content for doc in docs[:3]
@@ -103,6 +100,7 @@ def chat_api():
             temperature=0.7
         )
 
+        # Extract reply & (optional) latency
         assistant_msg = chat_completion.choices[0].message.content
         duration      = f"[{getattr(chat_completion, 'latency', 0):.2f}s]"
 
