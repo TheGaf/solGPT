@@ -4,6 +4,7 @@ import logging
 import os
 import traceback
 
+from rag.drive import load_drive_docs
 from flask import (
     Blueprint, request, jsonify, session,
     render_template, redirect, url_for
@@ -88,10 +89,16 @@ def chat_api():
         # Determine model name
         model_name = os.getenv("GROQ_MODEL", "").strip() or "llama3-8b-8192"
 
+        # Load top 3 Drive documents for RAG context
+        docs = load_drive_docs(drive_service, FOLDER_ID)
+        augmented_prompt = SYSTEM_PROMPT + "\n\n" + "\n\n".join(
+            doc.page_content for doc in docs[:3]
+        )
+
         # Call the Groq chat completion endpoint
         chat_completion = client.chat.completions.create(
             model=model_name,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
+            messages=[{"role": "system", "content": augmented_prompt}] + history,
             max_tokens=512,
             temperature=0.7
         )
