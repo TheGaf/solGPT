@@ -138,13 +138,13 @@
       chat.appendChild(c);
       chat.scrollTop = chat.scrollHeight;
 
-      try {
-        // point at /chat/api
-        const res = await fetch('https://sol-gpt-n1ed.onrender.com/chat/api', {
-          method: 'POST',
-          credentials: 'include',
-          body: fd
-        });
+try {
+  const res = await fetch('/chat/api', {
+    method: 'POST',
+    credentials: 'include',
+    body: fd
+  });
+  const data = await res.json();
         const data = await res.json();
         const now  = new Date().toLocaleTimeString([], {
           hour:   '2-digit',
