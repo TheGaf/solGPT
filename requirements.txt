@@ -11,3 +11,5 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 open-clip-torch
+markdown2>=2.4.0
+PyPDF2>=3.0.0
