@@ -52,8 +52,8 @@ except Exception as e:
     text_collection = None
 
 # ─── 6) Google Drive & Vision credentials ────────────────────────────
-drive_service = None
-GCP_CREDENTIALS = None
+drive_service    = None
+GCP_CREDENTIALS  = None
 
 FOLDER_ID  = os.getenv("DRIVE_FOLDER_ID")
 creds_json = os.getenv("DRIVE_CRED_JSON")
@@ -68,19 +68,23 @@ if FOLDER_ID and (creds_json or creds_path):
             with open(creds_path, "r", encoding="utf-8") as f:
                 info = json.load(f)
 
-        # request full drive scope for read/write
+        # request full Drive R/W + allow all Google Cloud APIs (incl. Vision)
         creds = service_account.Credentials.from_service_account_info(
             info,
             scopes=[
-                "https://www.googleapis.com/auth/drive",     # full Drive R/W
-                "https://www.googleapis.com/auth/cloud-platform"  # allows Vision & other APIs
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/cloud-platform"
             ],
         )
 
-        # build service instances
-        drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        # build the Drive service
+        drive_service = build(
+            "drive", "v3",
+            credentials=creds,
+            cache_discovery=False
+        )
 
-        # stash the creds for Vision client
+        # stash creds for Vision client usage
         GCP_CREDENTIALS = creds
 
         logger.info("Google Drive & Vision credentials initialized.")
@@ -91,6 +95,7 @@ else:
 
 # ─── 7) Expose any helpers ───────────────────────────────────────────
 from rag.drive import load_drive_docs
+
 def get_drive_snippets():
     """Return up to 3 page_content strings from your Drive-folder docs."""
     if not drive_service:
