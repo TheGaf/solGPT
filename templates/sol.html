@@ -27,6 +27,18 @@
     }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
     .send-btn { width:100px; margin-left:auto; display:block; }
+    #listDriveBtn {
+      margin-left: 10px;
+      padding: 0.5em 1em;
+      background: #59DCFF;
+      border: none;
+      color: #000;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    #listDriveBtn:hover {
+      opacity: 0.8;
+    }
   </style>
 </head>
 <body>
@@ -41,6 +53,8 @@
         <input type="checkbox" id="toggleSources" checked />
         Show Sources
       </label>
+      <!-- Drive listing button -->
+      <button id="listDriveBtn">📂 My Drive Files</button>
     </div>
 
     <div class="chat-box" id="chat"></div>
@@ -64,6 +78,7 @@
     const toggleSrc       = document.getElementById('toggleSources');
     const fileInput       = document.getElementById('fileUpload');
     const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const listDriveBtn    = document.getElementById('listDriveBtn');
 
     // Show filename when chosen
     fileInput.addEventListener('change', () => {
@@ -159,6 +174,24 @@
       const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
       addMessage(data.html||data.reply, 'sol', now, true);
     }
+
+    // Drive-list handler
+    listDriveBtn.addEventListener('click', async () => {
+      const res = await fetch('/chat/drive', { credentials: 'include' });
+      if (!res.ok) {
+        addMessage('⚠️ Could not fetch Drive files.', 'sol');
+        return;
+      }
+      const { files } = await res.json();
+      if (!files.length) {
+        addMessage('📂 Your Drive folder is empty.', 'sol');
+        return;
+      }
+      const listHtml = files.map(f =>
+        `<p><a href="${f.viewUrl}" target="_blank">${f.name}</a></p>`
+      ).join('');
+      addMessage(listHtml, 'sol', null, true);
+    });
 
     sendBtn.addEventListener('click', sendMessage);
     inputBox.addEventListener('keydown', e=>{
