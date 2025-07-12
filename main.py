@@ -10,12 +10,12 @@ from config import SYSTEM_PROMPT, drive_service, FOLDER_ID, client
 from routes.chat import chat_bp
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev‐fallback-secret")
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-fallback-secret")
 
 # Allow the session cookie to be sent via fetch(credentials: 'include')
 app.config.update(
-    SESSION_COOKIE_SAMESITE='None',   # allow cross-site or same-site requests
-    SESSION_COOKIE_SECURE=True,       # cookie only over HTTPS
+    SESSION_COOKIE_SAMESITE='None',  # allow cross-site or same-site requests
+    SESSION_COOKIE_SECURE=True        # cookie only over HTTPS
 )
 
 # Enable CORS (with credentials) on /chat/*
@@ -46,12 +46,5 @@ def catch_all(err):
     logging.error("Uncaught exception:\n%s", traceback.format_exc())
     return {"error": "Server crashed", "details": str(err)}, 500
 
-
-if __name__ == "__main__":
-    if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError("GROQ_API_KEY is not set in environment")
-
-    port = int(os.environ.get("PORT", 5000))
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Starting app on port %d", port)
-    app.run(host="0.0.0.0", port=port)
+# Note: app.run() is omitted in favor of running under Gunicorn,
+# which will bind to the PORT environment variable automatically.
