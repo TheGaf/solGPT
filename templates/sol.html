@@ -9,42 +9,31 @@
   <!-- Google font -->
   <link rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap" />
-
   <link rel="stylesheet" href="https://gaf.nyc/gaf_solstandards.css" />
 
   <style>
+    /* hide the native file input behind our "+" button */
+    .input-buttons > input[type="file"] { display: none; }
+
+    /* show chosen filename */
+    #fileNameDisplay {
+      font-size: 0.9em; color: #ccc; max-width:150px;
+      white-space: nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+
     .blinking-cursor {
-      font-weight: bold;
-      color: #59DCFF;
+      font-weight: bold; color: #59DCFF;
       animation: blink 1s step-start infinite;
     }
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50%      { opacity: 0; }
-    }
-    .send-btn {
-      width: 100px;
-      margin-left: auto;
-      display: block;
-    }
-    .input-buttons > input[type="file"] {
-      display: none;
-    }
-    #fileNameDisplay {
-      font-size: 0.9em;
-      color: #ccc;
-      margin-left: 8px;
-    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .send-btn { width:100px; margin-left:auto; display:block; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <div class="app">
     <div class="header">
-      <img src="https://gaf.nyc/sol_v1.png" alt="SOL AI" class="logo" />
-      <a href="https://gaf.nyc" target="_blank" rel="noopener">
-        <img src="https://gaf.nyc/BGtitle.svg" alt="BG Logo" class="logo" />
-      </a>
+      <img src="https://gaf.nyc/sol_v1.png" class="logo" />
+      <a href="https://gaf.nyc" target="_blank"><img src="https://gaf.nyc/BGtitle.svg" class="logo" /></a>
     </div>
 
     <div class="input-block">
@@ -58,10 +47,10 @@
 
     <div class="input-block">
       <textarea id="inputBox" class="input-text"
-                placeholder="Type your message..." autocomplete="off"></textarea>
+                placeholder="Type your message…" autocomplete="off"></textarea>
       <div class="input-buttons">
         <label for="fileUpload" class="upload-btn">+</label>
-        <input type="file" id="fileUpload" name="file" accept="image/*" />
+        <input type="file" id="fileUpload" accept="image/*" />
         <span id="fileNameDisplay"></span>
         <button class="send-btn" id="sendBtn">Send</button>
       </div>
@@ -76,19 +65,18 @@
     const fileInput       = document.getElementById('fileUpload');
     const fileNameDisplay = document.getElementById('fileNameDisplay');
 
+    // Show filename when chosen
     fileInput.addEventListener('change', () => {
-      fileNameDisplay.textContent = fileInput.files.length
-        ? fileInput.files[0].name
-        : '';
+      fileNameDisplay.textContent = fileInput.files[0]?.name || '';
     });
 
-    function addMessage(msg, cls, time = null, isHTML = false) {
+    function addMessage(msg, cls, time=null, isHTML=false) {
       const b = document.createElement('div');
       b.className = 'bubble ' + cls;
       if (isHTML) b.innerHTML = msg;
       else        b.textContent = msg;
       chat.appendChild(b);
-      if (cls === 'sol' && time) {
+      if (cls==='sol' && time) {
         const t = document.createElement('div');
         t.className = 'timecode';
         t.textContent = time;
@@ -102,21 +90,22 @@
       const file = fileInput.files[0];
       if (!text && !file) return;
 
-      // Show user text
+      // Show user text bubble
       if (text) addMessage(text, 'user');
-      inputBox.value = '';
-
-      // Preview image if provided
+      // Preview image locally
       if (file && file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = e => {
           addMessage(
-            `<img src="${e.target.result}" style="max-width:100%; border-radius:6px; margin:6px 0;">`,
+            `<img src="${e.target.result}" style="max-width:100%;border-radius:6px;margin:6px 0;">`,
             'user', null, true
           );
         };
         reader.readAsDataURL(file);
       }
+
+      // Clear inputs
+      inputBox.value = '';
       fileInput.value = '';
       fileNameDisplay.textContent = '';
 
@@ -127,69 +116,54 @@
       chat.appendChild(thinking);
       chat.scrollTop = chat.scrollHeight;
 
-      // Build fetch options for JSON or multipart
-      let fetchOpts;
+      // Build request options
+      let opts;
       if (file) {
         const fd = new FormData();
         if (text) fd.append('message', text);
         fd.append('file', file);
         fd.append('show_sources', toggleSrc.checked);
-        fetchOpts = {
-          method: 'POST',
-          credentials: 'include',
-          body: fd,
-          redirect: 'manual'
-        };
+        opts = { method:'POST', credentials:'include', body:fd };
       } else {
-        fetchOpts = {
+        opts = {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: text,
-            show_sources: toggleSrc.checked
-          }),
-          redirect: 'manual'
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ message: text, show_sources: toggleSrc.checked })
         };
       }
 
+      // Fire off
       let res;
-      try {
-        res = await fetch('/chat/api', fetchOpts);
-      } catch (netErr) {
-        console.error('Network error', netErr);
+      try { res = await fetch('/chat/api', opts); }
+      catch (e) {
         thinking.remove();
         addMessage('⚠️ Could not connect to server.', 'sol');
         return;
       }
 
-      const ctype = res.headers.get('Content-Type') || '';
-      if (res.status !== 200 || !ctype.includes('application/json')) {
-        console.warn('Unexpected response:', res.status, ctype);
+      const ctype = res.headers.get('Content-Type')||'';
+      if (res.status!==200 || !ctype.includes('application/json')) {
         thinking.remove();
-        addMessage('⚠️ Server error. Please refresh the page.', 'sol');
+        addMessage('⚠️ Server error. Please refresh.', 'sol');
         return;
       }
 
-      const payload = await res.json();
+      const data = await res.json();
       thinking.remove();
       if (!res.ok) {
-        console.error('Chat API error', payload);
-        addMessage('⚠️ ' + (payload.error || 'Server error'), 'sol');
+        addMessage('⚠️ '+(data.error||'Server error'), 'sol');
         return;
       }
 
-      const now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
-      const raw = payload.html || payload.reply;
-      const html = payload.html ? raw : marked.parse(raw);
-      addMessage(html, 'sol', now, true);
+      const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      addMessage(data.html||data.reply, 'sol', now, true);
     }
 
     sendBtn.addEventListener('click', sendMessage);
-    inputBox.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
+    inputBox.addEventListener('keydown', e=>{
+      if (e.key==='Enter' && !e.shiftKey) {
+        e.preventDefault(); sendMessage();
       }
     });
   </script>
