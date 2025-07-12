@@ -1,4 +1,4 @@
-# config.py  (or wherever you keep your bootstrap code)
+# config.py
 
 import os
 import json
@@ -7,50 +7,32 @@ from dotenv import load_dotenv
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# 1) Load .env
+# ─── 1) Load .env & personality file ────────────────────────────────
 load_dotenv()
 
-# 2) Logging
+# locate your personality prompt on disk
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(BASE_DIR, "SYSTEMPROMPT.txt"), encoding="utf-8") as f:
+    SYSTEM_PROMPT = f.read().strip()
+
+# ─── 2) Logging ─────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 3) Required secrets
+# ─── 3) Validate core env vars ──────────────────────────────────────
 required = ["SOL_GPT_PASSWORD", "GROQ_API_KEY"]
-missing = [v for v in required if not os.getenv(v)]
+missing  = [v for v in required if not os.getenv(v)]
 if missing:
     raise RuntimeError(f"Missing required environment variables: {missing}")
 
-# 4) Optional Brave Search key
+# ─── 4) Optional Brave Search ───────────────────────────────────────
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY")
 if BRAVE_API_KEY:
     logger.info("Brave Search enabled.")
 else:
-    logger.info("Brave Search disabled (no BRAVE_API_KEY).")
+    logger.info("Brave Search disabled.")
 
-def search_brave(query: str, count: int = 5):
-    """
-    Returns a list of (title, snippet, url) from Brave Search.
-    Falls back to empty list if no key/config.
-    """
-    if not BRAVE_API_KEY:
-        return []
-
-    import requests
-    endpoint = "https://api.search.brave.com/res/v1/web/all"
-    headers = {
-        "Accept": "application/json",
-        "X-API-KEY": BRAVE_API_KEY,
-    }
-    params = {"q": query, "size": count}
-    r = requests.get(endpoint, headers=headers, params=params, timeout=5)
-    r.raise_for_status()
-    data = r.json()
-    results = []
-    for item in data.get("data", []):
-        results.append((item.get("title"), item.get("description"), item.get("url")))
-    return results
-
-# 5) Initialize Groq + Chroma
+# ─── 5) Initialize Groq & Chroma ────────────────────────────────────
 try:
     from groq import Groq
     import chromadb
@@ -69,48 +51,53 @@ except Exception as e:
     chroma_client = None
     text_collection = None
 
-# 6) Google Drive RAG
+# ─── 6) Google Drive & Vision credentials ────────────────────────────
 drive_service = None
-FOLDER_ID      = os.getenv("DRIVE_FOLDER_ID")
-creds_json     = os.getenv("DRIVE_CRED_JSON")
-creds_path     = os.getenv("DRIVE_CRED_PATH")
+GCP_CREDENTIALS = None
+
+FOLDER_ID  = os.getenv("DRIVE_FOLDER_ID")
+creds_json = os.getenv("DRIVE_CRED_JSON")
+creds_path = os.getenv("DRIVE_CRED_PATH")
 
 if FOLDER_ID and (creds_json or creds_path):
     try:
+        # load service-account info
         if creds_json:
             info = json.loads(creds_json)
         else:
             with open(creds_path, "r", encoding="utf-8") as f:
                 info = json.load(f)
 
+        # request full drive scope for read/write
         creds = service_account.Credentials.from_service_account_info(
             info,
             scopes=[
-                "https://www.googleapis.com/auth/drive"
+                "https://www.googleapis.com/auth/drive",     # full Drive R/W
+                "https://www.googleapis.com/auth/cloud-platform"  # allows Vision & other APIs
             ],
         )
+
+        # build service instances
         drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
-        logger.info("Google Drive RAG enabled.")
+
+        # stash the creds for Vision client
+        GCP_CREDENTIALS = creds
+
+        logger.info("Google Drive & Vision credentials initialized.")
     except Exception as e:
-        drive_service = None
         logger.warning(f"Google Drive RAG disabled: {e}")
 else:
     logger.info("Google Drive RAG disabled (missing FOLDER_ID or credentials).")
 
-# 7) System prompt
-SYSTEM_PROMPT = os.getenv(
-    "SYSTEM_PROMPT",
-    "You are Sol: a locally hosted AI assistant built specifically for Gaf."
-)
-
-# 8) Helper to load docs (if you have rag.drive.load_drive_docs)
+# ─── 7) Expose any helpers ───────────────────────────────────────────
 from rag.drive import load_drive_docs
 def get_drive_snippets():
+    """Return up to 3 page_content strings from your Drive-folder docs."""
     if not drive_service:
         return []
     docs = load_drive_docs(drive_service, FOLDER_ID)
-    # load_drive_docs may return (docs, metadata) or just docs
     docs_list = docs[0] if isinstance(docs, tuple) else docs
-    return [d.page_content if hasattr(d, "page_content") else str(d)
-            for d in docs_list[:3]]
-
+    snippets = []
+    for d in docs_list[:3]:
+        snippets.append(getattr(d, "page_content", str(d)))
+    return snippets
