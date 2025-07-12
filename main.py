@@ -29,7 +29,7 @@ app.register_blueprint(chat_bp)
 # Redirect root to the chat UI
 @app.route("/")
 def root():
-    return redirect(url_for("chat.chat_ui"))
+    return redirect("/chat/")
 
 # Health-check endpoint
 @app.route("/healthz")
