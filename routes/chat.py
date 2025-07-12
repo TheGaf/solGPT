@@ -47,21 +47,34 @@ def chat_ui():
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Health‐check and CORS preflight
+    # Health-check and CORS preflight
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
     try:
-        # Parse JSON payload
+        # Determine content type and extract inputs
         ctype = request.headers.get("Content-Type", "")
-        if not ctype.startswith("application/json"):
-            return jsonify({
-                "error": "Unsupported Media Type",
-                "details": f"Expected application/json, got {ctype}"
-            }), 415
-        data = request.get_json(force=True)
+        if ctype.startswith("application/json"):
+            data = request.get_json(force=True)
+            user_msg = data.get("message", "").strip()
+            show_sources = bool(data.get("show_sources", False))
+        else:
+            # multipart/form-data: handle file upload
+            user_msg = request.form.get("message", "").strip()
+            show_sources = request.form.get("show_sources", "false") == "true"
+            uploaded = request.files.get("file")
+            if uploaded:
+                # upload to Google Drive and get URL
+                drive_file = drive_service.files().create(
+                    body={"name": uploaded.filename, "parents": [FOLDER_ID]},
+                    media_body=uploaded,
+                    fields="id"
+                ).execute()
+                file_url = f"https://drive.google.com/uc?id={drive_file['id']}"
+                # prefix image link to user message
+                user_msg = f"[Image: {file_url}]\n\n{user_msg}"
 
-        # Authentication guard
+        # Auth guard
         if not session.get("authenticated"):
             return jsonify({
                 "reply": "Not authenticated",
@@ -69,31 +82,24 @@ def chat_api():
                 "html": None
             }), 401
 
-        # Extract inputs
-        user_msg     = data.get("message", "").strip()
-        show_sources = bool(data.get("show_sources", False))
-
         # Update conversation history
         history = session.get("history", [])
         history.append({"role": "user", "content": user_msg})
 
-        # Determine model name
+        # Determine model
         model_name = os.getenv("GROQ_MODEL", "").strip() or "llama3-8b-8192"
 
-        # — RAG STEP: load Drive docs safely
+        # RAG: load Drive docs safely
         docs_result = load_drive_docs(drive_service, FOLDER_ID)
-        if isinstance(docs_result, tuple):
-            docs_list = docs_result[0]
-        else:
-            docs_list = docs_result
+        docs_list = docs_result[0] if isinstance(docs_result, tuple) else docs_result
 
-        # Build the augmented system prompt
+        # Build augmented prompt
         augmented_prompt = SYSTEM_PROMPT
         if docs_list:
             snippets = "\n\n".join(doc.page_content for doc in docs_list[:3])
             augmented_prompt += "\n\n" + snippets
 
-        # Call the Groq chat completion endpoint
+        # Call Groq chat completion
         chat_completion = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "system", "content": augmented_prompt}] + history,
@@ -101,15 +107,14 @@ def chat_api():
             temperature=0.7
         )
 
-        # Extract the assistant’s reply and optional latency
         assistant_msg = chat_completion.choices[0].message.content
-        duration      = f"[{getattr(chat_completion, 'latency', 0):.2f}s]"
+        duration = f"[{getattr(chat_completion, 'latency', 0):.2f}s]"
 
-        # Persist assistant reply back into session history
+        # Persist reply
         history.append({"role": "assistant", "content": assistant_msg})
         session["history"] = history
 
-        # Build HTML for the front-end
+        # Build HTML
         reply_html = f"<p>{assistant_msg}</p>"
         if show_sources and getattr(chat_completion, "sources", None):
             items = "".join(f"<li>{src}</li>" for src in chat_completion.sources)
@@ -117,7 +122,7 @@ def chat_api():
 
         return jsonify({
             "reply": assistant_msg,
-            "html":  reply_html,
+            "html": reply_html,
             "duration": duration
         }), 200
 
