@@ -47,8 +47,19 @@ def chat_ui():
 
 @chat_bp.route("/logout")
 def logout():
+    # Clear everything
     session.clear()
-    return redirect(url_for("chat.chat_ui"))
+    # Render the login page in one shot, avoiding a double‐hop redirect
+    try:
+        return render_template("index.html"), 200
+    except Exception:
+        # If for some reason index.html blows up, show a plain fallback
+        logging.error("🚨 crash in logout render:\n%s", traceback.format_exc())
+        return (
+            "<h1>Logged out</h1>"
+            "<p>Please <a href='/chat/'>click here</a> to log in again.</p>",
+            200
+        )
 
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
