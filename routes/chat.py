@@ -19,8 +19,7 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
     try:
-        if "history" not in session:
-            session["history"] = []
+        session.setdefault("history", [])
 
         if request.method == "POST" and "password" in request.form:
             if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
@@ -55,66 +54,65 @@ def chat_api():
         return jsonify({"status": "ok"}), 200
 
     try:
-        # Determine content type
-        ctype = request.headers.get("Content-Type", "")
-        if ctype.startswith("application/json"):
-            data = request.get_json(force=True)
-            user_msg = data.get("message", "").strip()
-            show_sources = bool(data.get("show_sources", False))
-            file = None
-        elif "multipart/form-data" in ctype:
-            user_msg = request.form.get("message", "").strip()
-            show_sources = request.form.get("show_sources", "false").lower() == "true"
-            file = request.files.get("file")
-        else:
-            return jsonify({
-                "error": "Unsupported Media Type",
-                "details": f"Expected JSON or multipart/form-data, got {ctype}"
-            }), 415
-
-        # Authentication guard
+        # --- Auth guard ---
         if not session.get("authenticated"):
             return jsonify({"reply":"Not authenticated","duration":"","html":None}), 401
 
-        # Handle file upload
-        if file:
-            # Upload to Drive
+        # --- 1) File-upload path (regardless of Content-Type) ---
+        uploaded = request.files.get("file")
+        if uploaded:
+            # Optional accompanying text
+            user_msg = request.form.get("message", "").strip()
+
+            # Upload to Google Drive
             drive_file = drive_service.files().create(
-                body={"name": file.filename, "parents": [FOLDER_ID]},
-                media_body=file,
+                body={"name": uploaded.filename, "parents": [FOLDER_ID]},
+                media_body=uploaded,
                 fields="id"
             ).execute()
             file_id = drive_file["id"]
+
+            # Make it publicly readable
             drive_service.permissions().create(
                 fileId=file_id,
                 body={"role":"reader","type":"anyone"}
             ).execute()
 
-            view_url = f"https://drive.google.com/file/d/{file_id}/view"
+            view_url     = f"https://drive.google.com/file/d/{file_id}/view"
             download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
+            # Return the thumbnail HTML
             html = (
-                f"<p>Uploaded <strong>{file.filename}</strong></p>"
+                f"<p>Uploaded <strong>{uploaded.filename}</strong></p>"
                 f"<a href=\"{view_url}\" target=\"_blank\">"
                 f"<img src=\"{download_url}\" "
                 "style=\"max-width:200px;border-radius:6px;margin:6px 0;\"/>"
                 "</a>"
             )
-            return jsonify({"reply": file.filename, "html": html, "duration": ""}), 200
+            return jsonify({"reply": uploaded.filename, "html": html, "duration": ""}), 200
 
-        # Text message path: update & cap history
-        history = session.get("history", [])
-        history.append({"role": "user", "content": user_msg})
+        # --- 2) JSON chat path ---
+        if not request.is_json:
+            return jsonify({
+                "error": "Unsupported Media Type",
+                "details": "Expected multipart/form-data with file or application/json"
+            }), 415
+
+        data         = request.get_json(force=True)
+        user_msg     = data.get("message", "").strip()
+        show_sources = bool(data.get("show_sources", False))
+
+        # --- Update & cap history ---
+        history = session["history"]
+        history.append({"role":"user","content":user_msg})
         history = history[-50:]
         session["history"] = history
 
-        # Determine model name
+        # --- RAG prep ---
         model_name = os.getenv("GROQ_MODEL", "llama3-8b-8192").strip()
-
-        # RAG: load Drive docs and flatten
-        raw_docs = load_drive_docs(drive_service, FOLDER_ID)
-        docs_list = raw_docs[0] if isinstance(raw_docs, tuple) else raw_docs
-        snippets = []
+        raw_docs   = load_drive_docs(drive_service, FOLDER_ID)
+        docs_list  = raw_docs[0] if isinstance(raw_docs, tuple) else raw_docs
+        snippets   = []
         for d in docs_list[:3]:
             if hasattr(d, "page_content"):
                 snippets.append(d.page_content)
@@ -124,7 +122,7 @@ def chat_api():
         if snippets:
             prompt += "\n\n" + "\n\n".join(snippets)
 
-        # Call Groq chat completion
+        # --- Call LLM ---
         chat_c = client.chat.completions.create(
             model=model_name,
             messages=[{"role":"system","content":prompt}] + history,
@@ -133,19 +131,23 @@ def chat_api():
         )
 
         assistant_msg = chat_c.choices[0].message.content
-        duration = f"[{getattr(chat_c, 'latency', 0):.2f}s]"
+        duration      = f"[{getattr(chat_c,'latency',0):.2f}s]"
 
         # Persist assistant reply
         history.append({"role":"assistant","content":assistant_msg})
         session["history"] = history
 
-        # Render Markdown → HTML server‐side
+        # --- Render Markdown & build HTML ---
         html_body = markdown(assistant_msg)
         if show_sources and getattr(chat_c, "sources", None):
             srcs = "".join(f"<li>{s}</li>" for s in chat_c.sources)
             html_body += f"<ul class='sources'>{srcs}</ul>"
 
-        return jsonify({"reply": assistant_msg, "html": html_body, "duration": duration}), 200
+        return jsonify({
+            "reply": assistant_msg,
+            "html":  html_body,
+            "duration": duration
+        }), 200
 
     except Exception:
         logging.error("Error in /chat/api:\n%s", traceback.format_exc())
@@ -155,7 +157,7 @@ def chat_api():
 
 @chat_bp.route("/drive", methods=["GET"])
 def list_drive_files():
-    # Authentication guard
+    # Auth guard
     if not session.get("authenticated"):
         return jsonify({"error":"Not authenticated"}), 401
 
@@ -165,15 +167,12 @@ def list_drive_files():
             fields="files(id,name,mimeType)"
         ).execute()
 
-        files = []
-        for f in resp.get("files", []):
-            fid = f["id"]
-            files.append({
-                "name": f["name"],
-                "mimeType": f["mimeType"],
-                "viewUrl": f"https://drive.google.com/file/d/{fid}/view",
-                "downloadUrl": f"https://drive.google.com/uc?id={fid}&export=download"
-            })
+        files = [{
+            "name": f["name"],
+            "mimeType": f["mimeType"],
+            "viewUrl":  f"https://drive.google.com/file/d/{f['id']}/view",
+            "downloadUrl": f"https://drive.google.com/uc?id={f['id']}&export=download"
+        } for f in resp.get("files", [])]
 
         return jsonify({"files": files}), 200
 
