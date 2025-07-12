@@ -106,7 +106,7 @@
       if (text) addMessage(text, 'user');
       inputBox.value = '';
 
-      // Show user image preview
+      // Preview image if provided
       if (file && file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = e => {
@@ -120,27 +120,35 @@
       fileInput.value = '';
       fileNameDisplay.textContent = '';
 
-      // thinking
+      // Thinking indicator
       const thinking = document.createElement('div');
       thinking.className = 'bubble sol';
       thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
       chat.appendChild(thinking);
       chat.scrollTop = chat.scrollHeight;
 
-      // build fetch options for JSON or multipart
+      // Build fetch options for JSON or multipart
       let fetchOpts;
       if (file) {
         const fd = new FormData();
         if (text) fd.append('message', text);
         fd.append('file', file);
         fd.append('show_sources', toggleSrc.checked);
-        fetchOpts = { method: 'POST', credentials: 'include', body: fd, redirect: 'manual' };
+        fetchOpts = {
+          method: 'POST',
+          credentials: 'include',
+          body: fd,
+          redirect: 'manual'
+        };
       } else {
         fetchOpts = {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, show_sources: toggleSrc.checked }),
+          body: JSON.stringify({
+            message: text,
+            show_sources: toggleSrc.checked
+          }),
           redirect: 'manual'
         };
       }
@@ -180,7 +188,8 @@
     sendBtn.addEventListener('click', sendMessage);
     inputBox.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault(); sendMessage();
+        e.preventDefault();
+        sendMessage();
       }
     });
   </script>
