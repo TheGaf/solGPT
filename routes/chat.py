@@ -93,10 +93,13 @@ def chat_api():
         docs_result = load_drive_docs(drive_service, FOLDER_ID)
         docs_list = docs_result[0] if isinstance(docs_result, tuple) else docs_result
 
-        # Build augmented prompt
+        # Normalize docs entries (unwrap any (doc, metadata) tuples)
+        clean_docs = [entry[0] if isinstance(entry, tuple) else entry for entry in docs_list]
+
+        # Build augmented prompt with top-3 snippets
         augmented_prompt = SYSTEM_PROMPT
-        if docs_list:
-            snippets = "\n\n".join(doc.page_content for doc in docs_list[:3])
+        if clean_docs:
+            snippets = "\n\n".join(doc.page_content for doc in clean_docs[:3])
             augmented_prompt += "\n\n" + snippets
 
         # Call Groq chat completion
