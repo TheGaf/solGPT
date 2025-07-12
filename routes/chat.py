@@ -9,6 +9,7 @@ from flask import (
     Blueprint, request, jsonify, session,
     render_template, redirect, url_for
 )
+from markdown2 import markdown  # ← server‐side markdown
 from config import SYSTEM_PROMPT, client, drive_service, FOLDER_ID
 
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
@@ -53,82 +54,69 @@ def chat_api():
         return jsonify({"status": "ok"}), 200
 
     try:
-        # parse JSON payload
+        # --- parse & auth guard ---
         ctype = request.headers.get("Content-Type", "")
-        if ctype.startswith("application/json"):
-            data = request.get_json(force=True)
-        else:
+        if not ctype.startswith("application/json"):
             return jsonify({
                 "error": "Unsupported Media Type",
                 "details": f"Expected application/json, got {ctype}"
             }), 415
 
-        # auth guard
+        data = request.get_json(force=True)
         if not session.get("authenticated"):
-            return jsonify({
-                "reply": "Not authenticated",
-                "duration": "",
-                "html": None
-            }), 401
+            return jsonify({"reply":"Not authenticated","duration":"","html":None}), 401
 
-        # user input
-        user_msg = data.get("message", "").strip()
+        user_msg     = data.get("message","").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        # update history
-        history = session.get("history", [])
-        history.append({"role": "user", "content": user_msg})
+        # --- history ---
+        history = session["history"]
+        history.append({"role":"user","content":user_msg})
 
-        # get model name
-        model_name = os.getenv("GROQ_MODEL", "llama3-8b-8192").strip()
+        # --- build prompt with Drive RAG ---
+        model_name = os.getenv("GROQ_MODEL","llama3-8b-8192").strip()
+        raw_docs   = load_drive_docs(drive_service, FOLDER_ID)
+        # always get a flat list of strings
+        docs_list = []
+        for entry in (raw_docs if isinstance(raw_docs,list) else (raw_docs[0] if isinstance(raw_docs,tuple) else [])):
+            if hasattr(entry,"page_content"):
+                docs_list.append(entry.page_content)
+            elif isinstance(entry,str):
+                docs_list.append(entry)
 
-        # load RAG docs
-        docs_raw = load_drive_docs(drive_service, FOLDER_ID)
-        # unify to list
-        docs_list = docs_raw[0] if isinstance(docs_raw, tuple) else docs_raw
-
-        # build augmented prompt
-        augmented = SYSTEM_PROMPT
+        prompt = SYSTEM_PROMPT
         if docs_list:
-            snippets = []
-            for d in docs_list[:3]:
-                if hasattr(d, 'page_content'):
-                    snippets.append(d.page_content)
-                elif isinstance(d, str):
-                    snippets.append(d)
-            augmented += "\n\n" + "\n\n".join(snippets)
+            prompt += "\n\n" + "\n\n".join(docs_list[:3])
 
-        # call Groq chat
-        chat_completion = client.chat.completions.create(
+        # --- call Groq chat ---
+        chat_c = client.chat.completions.create(
             model=model_name,
-            messages=[{"role": "system", "content": augmented}] + history,
+            messages=[{"role":"system","content":prompt}] + history,
             max_tokens=512,
-            temperature=0.7
+            temperature=0.7,
         )
 
-        assistant_msg = chat_completion.choices[0].message.content
-        duration = f"[{getattr(chat_completion, 'latency', 0):.2f}s]"
+        assistant_msg = chat_c.choices[0].message.content
+        duration      = f"[{getattr(chat_c,'latency',0):.2f}s]"
 
-        # persist reply
-        history.append({"role": "assistant", "content": assistant_msg})
+        # persist
+        history.append({"role":"assistant","content":assistant_msg})
         session["history"] = history
 
-        # build HTML
-        reply_html = f"<p>{assistant_msg}</p>"
-        if show_sources and getattr(chat_completion, 'sources', None):
-            items = "".join(f"<li>{src}</li>" for src in chat_completion.sources)
-            reply_html += f"<ul class='sources'>{items}</ul>"
+        # --- Render Markdown → HTML server‐side ---
+        html_body = markdown(assistant_msg)
+        # optionally append sources list if you got any
+        if show_sources and getattr(chat_c, "sources", None):
+            srcs = "".join(f"<li>{s}</li>" for s in chat_c.sources)
+            html_body += f"<ul class='sources'>{srcs}</ul>"
 
         return jsonify({
             "reply": assistant_msg,
-            "html": reply_html,
+            "html":  html_body,
             "duration": duration
         }), 200
 
     except Exception:
         logging.error("Error in /chat/api:\n%s", traceback.format_exc())
         last = traceback.format_exc().splitlines()[-1]
-        return jsonify({
-            "error": "Internal server error",
-            "details": last
-        }), 500
+        return jsonify({"error":"Internal server error","details":last}), 500
