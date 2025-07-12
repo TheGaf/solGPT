@@ -12,20 +12,23 @@ from flask import (
 )
 from googleapiclient.http import MediaIoBaseUpload
 from markdown2 import markdown
-from google.cloud import vision  # ← new import
+from google.cloud import vision
 
 from rag.drive import load_drive_docs
-from config import SYSTEM_PROMPT, client, drive_service, FOLDER_ID
+from config import (
+    SYSTEM_PROMPT, client, drive_service, FOLDER_ID, GCP_CREDENTIALS
+)
 
 chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 
-# initialize Vision client once
-vision_client = vision.ImageAnnotatorClient()
+# initialize Vision client with explicit creds
+vision_client = vision.ImageAnnotatorClient(credentials=GCP_CREDENTIALS)
 
 
 @chat_bp.route("", methods=["GET", "POST"])
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
+    """Login gate and then render the chat UI."""
     try:
         if "history" not in session:
             session["history"] = []
@@ -53,13 +56,19 @@ def chat_ui():
 
 @chat_bp.route("/logout")
 def logout():
+    """Clear session and return to login."""
     session.clear()
     return redirect(url_for("chat.chat_ui"))
 
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Health-check / CORS preflight
+    """
+    - GET/OPTIONS → health check
+    - multipart/form-data+file → image analysis (Vision) or Drive upload
+    - application/json → chat w/ RAG + Groq
+    """
+    # 1) Preflight
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
@@ -67,20 +76,18 @@ def chat_api():
         if not session.get("authenticated"):
             return jsonify({"reply": "Not authenticated", "duration": "", "html": None}), 401
 
-        # 1) File upload branch (images + text files)
+        # --- File upload branch ---
         uploaded = request.files.get("file")
         if uploaded:
-            # if it's an image → Vision
+            # 1a) image → Vision
             if uploaded.mimetype.startswith("image/"):
                 img_bytes = uploaded.read()
                 vimage = vision.Image(content=img_bytes)
 
-                # run label detection
                 resp = vision_client.label_detection(image=vimage)
                 labels = [l.description for l in resp.label_annotations][:5]
                 desc = "I see: " + ", ".join(labels) if labels else "No labels detected."
 
-                # embed the image so user sees it back
                 data_url = base64.b64encode(img_bytes).decode()
                 html = (
                     f"<p><strong>Image Analysis:</strong> {desc}</p>"
@@ -89,13 +96,8 @@ def chat_api():
                 )
                 return jsonify({"reply": desc, "html": html, "duration": ""}), 200
 
-            # otherwise treat as a generic file → upload to Drive
-            user_msg = request.form.get("message", "").strip()
-            media = MediaIoBaseUpload(
-                uploaded.stream,
-                mimetype=uploaded.mimetype,
-                resumable=False
-            )
+            # 1b) non-image → upload to Drive
+            media = MediaIoBaseUpload(uploaded.stream, mimetype=uploaded.mimetype, resumable=False)
             drive_file = drive_service.files().create(
                 body={"name": uploaded.filename, "parents": [FOLDER_ID]},
                 media_body=media,
@@ -119,7 +121,7 @@ def chat_api():
             )
             return jsonify({"reply": uploaded.filename, "html": html, "duration": ""}), 200
 
-        # 2) JSON chat branch
+        # --- JSON chat branch ---
         ctype = request.headers.get("Content-Type", "")
         if not ctype.startswith("application/json"):
             return jsonify({
@@ -131,36 +133,32 @@ def chat_api():
         user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
-        # update history
+        # update & cap history
         history = session.setdefault("history", [])
         history.append({"role": "user", "content": user_msg})
         history = history[-50:]
         session["history"] = history
 
-        # pick model
-        model_name = os.getenv("GROQ_MODEL", "llama3-8b-8192").strip()
-
-        # RAG: load Drive docs
+        # RAG: fetch Drive snippets
         raw_docs = load_drive_docs(drive_service, FOLDER_ID)
         docs_list = raw_docs[0] if isinstance(raw_docs, tuple) else raw_docs
         snippets = []
         for d in docs_list[:3]:
-            if hasattr(d, "page_content"):
-                snippets.append(d.page_content)
-            elif isinstance(d, str):
-                snippets.append(d)
+            snippets.append(getattr(d, "page_content", str(d)))
 
+        # build prompt + call Groq
         prompt = SYSTEM_PROMPT
         if snippets:
             prompt += "\n\n" + "\n\n".join(snippets)
 
-        # call Groq
+        model_name = os.getenv("GROQ_MODEL", "llama3-8b-8192").strip()
         chat_c = client.chat.completions.create(
             model=model_name,
             messages=[{"role":"system","content":prompt}] + history,
             max_tokens=512,
             temperature=0.7
         )
+
         assistant_msg = chat_c.choices[0].message.content
         duration      = f"[{getattr(chat_c, 'latency', 0):.2f}s]"
 
@@ -168,7 +166,7 @@ def chat_api():
         history.append({"role":"assistant","content":assistant_msg})
         session["history"] = history
 
-        # markdown → HTML
+        # render Markdown → HTML
         html_body = markdown(assistant_msg)
         if show_sources and getattr(chat_c, "sources", None):
             srcs = "".join(f"<li>{s}</li>" for s in chat_c.sources)
@@ -184,6 +182,7 @@ def chat_api():
 
 @chat_bp.route("/drive", methods=["GET"])
 def list_drive_files():
+    """List non-trashed files in your RAG folder."""
     if not session.get("authenticated"):
         return jsonify({"error": "Not authenticated"}), 401
 
@@ -207,4 +206,4 @@ def list_drive_files():
 
     except Exception:
         logging.error("Error listing Drive files:\n%s", traceback.format_exc())
-        return jsonify({"error":"Could not list files"}), 500
+        return jsonify({"error": "Could not list files"}), 500
