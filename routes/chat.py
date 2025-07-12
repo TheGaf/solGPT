@@ -18,18 +18,22 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/chat")
 @chat_bp.route("/", methods=["GET", "POST"])
 def chat_ui():
     try:
+        # Initialize session history
         if "history" not in session:
             session["history"] = []
 
+        # Handle login form
         if request.method == "POST" and "password" in request.form:
             if request.form["password"] == os.getenv("SOL_GPT_PASSWORD"):
                 session["authenticated"] = True
                 return redirect(url_for("chat.chat_ui"))
             return render_template("index.html", error="Incorrect password"), 401
 
+        # If not authenticated, show login
         if not session.get("authenticated"):
             return render_template("index.html"), 200
 
+        # Authenticated → show chat UI
         return render_template("sol.html"), 200
 
     except Exception:
@@ -43,10 +47,12 @@ def chat_ui():
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
+    # Health‐check and CORS preflight
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
     try:
+        # Parse JSON payload
         ctype = request.headers.get("Content-Type", "")
         if not ctype.startswith("application/json"):
             return jsonify({
@@ -55,6 +61,7 @@ def chat_api():
             }), 415
         data = request.get_json(force=True)
 
+        # Authentication guard
         if not session.get("authenticated"):
             return jsonify({
                 "reply": "Not authenticated",
@@ -62,20 +69,31 @@ def chat_api():
                 "html": None
             }), 401
 
+        # Extract inputs
         user_msg     = data.get("message", "").strip()
         show_sources = bool(data.get("show_sources", False))
 
+        # Update conversation history
         history = session.get("history", [])
         history.append({"role": "user", "content": user_msg})
 
+        # Determine model name
         model_name = os.getenv("GROQ_MODEL", "").strip() or "llama3-8b-8192"
 
-        # RAG: unpack tuple return value
-        docs_list, _ = load_drive_docs(drive_service, FOLDER_ID)
-        augmented_prompt = SYSTEM_PROMPT + "\n\n" + "\n\n".join(
-            doc.page_content for doc in docs_list[:3]
-        )
+        # — RAG STEP: load Drive docs safely
+        docs_result = load_drive_docs(drive_service, FOLDER_ID)
+        if isinstance(docs_result, tuple):
+            docs_list = docs_result[0]
+        else:
+            docs_list = docs_result
 
+        # Build the augmented system prompt
+        augmented_prompt = SYSTEM_PROMPT
+        if docs_list:
+            snippets = "\n\n".join(doc.page_content for doc in docs_list[:3])
+            augmented_prompt += "\n\n" + snippets
+
+        # Call the Groq chat completion endpoint
         chat_completion = client.chat.completions.create(
             model=model_name,
             messages=[{"role": "system", "content": augmented_prompt}] + history,
@@ -83,12 +101,15 @@ def chat_api():
             temperature=0.7
         )
 
+        # Extract the assistant’s reply and optional latency
         assistant_msg = chat_completion.choices[0].message.content
         duration      = f"[{getattr(chat_completion, 'latency', 0):.2f}s]"
 
+        # Persist assistant reply back into session history
         history.append({"role": "assistant", "content": assistant_msg})
         session["history"] = history
 
+        # Build HTML for the front-end
         reply_html = f"<p>{assistant_msg}</p>"
         if show_sources and getattr(chat_completion, "sources", None):
             items = "".join(f"<li>{src}</li>" for src in chat_completion.sources)
