@@ -86,8 +86,7 @@ if FOLDER_ID and (creds_json or creds_path):
         creds = service_account.Credentials.from_service_account_info(
             info,
             scopes=[
-                "https://www.googleapis.com/auth/drive.readonly",
-                "https://www.googleapis.com/auth/drive.file"
+                "https://www.googleapis.com/auth/drive"
             ],
         )
         drive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
