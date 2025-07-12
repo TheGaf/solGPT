@@ -50,7 +50,7 @@ def logout():
 
 @chat_bp.route("/api", methods=["GET", "POST", "OPTIONS"])
 def chat_api():
-    # Health‐check and CORS preflight
+    # Health check / CORS preflight
     if request.method in ("GET", "OPTIONS"):
         return jsonify({"status": "ok"}), 200
 
@@ -78,18 +78,18 @@ def chat_api():
 
         # Handle file upload
         if file:
-            # Upload to Google Drive
+            # Upload to Drive
             drive_file = drive_service.files().create(
                 body={"name": file.filename, "parents": [FOLDER_ID]},
                 media_body=file,
                 fields="id"
             ).execute()
             file_id = drive_file["id"]
-            # Make it publicly readable
             drive_service.permissions().create(
                 fileId=file_id,
                 body={"role":"reader","type":"anyone"}
             ).execute()
+
             view_url = f"https://drive.google.com/file/d/{file_id}/view"
             download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
@@ -139,7 +139,7 @@ def chat_api():
         history.append({"role":"assistant","content":assistant_msg})
         session["history"] = history
 
-        # Server‐side Markdown → HTML
+        # Render Markdown → HTML server‐side
         html_body = markdown(assistant_msg)
         if show_sources and getattr(chat_c, "sources", None):
             srcs = "".join(f"<li>{s}</li>" for s in chat_c.sources)
@@ -151,3 +151,32 @@ def chat_api():
         logging.error("Error in /chat/api:\n%s", traceback.format_exc())
         last = traceback.format_exc().splitlines()[-1]
         return jsonify({"error":"Internal server error","details":last}), 500
+
+
+@chat_bp.route("/drive", methods=["GET"])
+def list_drive_files():
+    # Authentication guard
+    if not session.get("authenticated"):
+        return jsonify({"error":"Not authenticated"}), 401
+
+    try:
+        resp = drive_service.files().list(
+            q=f"'{FOLDER_ID}' in parents and trashed=false",
+            fields="files(id,name,mimeType)"
+        ).execute()
+
+        files = []
+        for f in resp.get("files", []):
+            fid = f["id"]
+            files.append({
+                "name": f["name"],
+                "mimeType": f["mimeType"],
+                "viewUrl": f"https://drive.google.com/file/d/{fid}/view",
+                "downloadUrl": f"https://drive.google.com/uc?id={fid}&export=download"
+            })
+
+        return jsonify({"files": files}), 200
+
+    except Exception:
+        logging.error("Error listing Drive files:\n%s", traceback.format_exc())
+        return jsonify({"error":"Could not list files"}), 500
