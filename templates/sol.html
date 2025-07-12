@@ -28,7 +28,7 @@
       display: block;
     }
   </style>
-   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <div class="app">
@@ -80,10 +80,12 @@
       const text = inputBox.value.trim();
       if (!text) return;
 
+      // show user's message
       addMessage(text, 'user');
       inputBox.value = '';
       chat.scrollTop = chat.scrollHeight;
 
+      // thinking indicator
       const thinking = document.createElement('div');
       thinking.className = 'bubble sol';
       thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
@@ -109,11 +111,12 @@
         return;
       }
 
-      // If redirect or non-200, force logout & re-auth
+      // handle non-200 or non-JSON without redirect
       const ctype = res.headers.get('Content-Type') || '';
-      if (res.status === 302 || res.redirected || res.status !== 200 || !ctype.includes('application/json')) {
-        console.warn('Unexpected response, logging out:', res.status, ctype);
-        window.location.href = '/chat/logout';
+      if (res.status !== 200 || !ctype.includes('application/json')) {
+        console.warn('Unexpected response:', res.status, ctype);
+        thinking.remove();
+        addMessage('⚠️ Server error. Please refresh the page.', 'sol');
         return;
       }
 
@@ -130,14 +133,12 @@
         hour:   '2-digit',
         minute: '2-digit'
       });
-      // new: render Markdown when payload.html is raw text
+
+      // render Markdown if needed
       const raw = payload.html || payload.reply;
-      const html = payload.html 
-        ? raw 
-        : marked.parse(raw);
+      const html = payload.html ? raw : marked.parse(raw);
 
       addMessage(html, 'sol', now, true);
-
     }
 
     sendBtn.addEventListener('click', sendMessage);
