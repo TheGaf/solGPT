@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SOL GPT – Password</title>
+<link rel="stylesheet" href="https://gaf.nyc/gafstandard.css">
+
+  <style>
+
+body {
+  font-family: 'Titillium Web', sans-serif;
+  background-color: #121212;
+  color: #59DCFF;
+  text-align: left;
+  padding: 20px;
+  overflow-y: auto;
+  line-height: 1.5;
+  min-height: 100vh;
+  margin: 0;
+}
+
+#bg-video {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  min-width: 100%;
+  min-height: 100%;
+  width: auto;
+  height: auto;
+  z-index: -1;
+  opacity: 1;
+}
+
+.container {
+  max-width: 300px;
+  margin: auto;
+  padding: 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.logo {
+  width: 60%;
+  max-width: 250px;
+  height: auto;
+  display: block;
+  margin: 0 auto 30px auto;
+  animation: slowBlink 0.75s infinite alternate;
+}
+
+@keyframes slowBlink {
+  0% { filter: brightness(1); }
+  100% { filter: brightness(2); }
+}
+
+h2 {
+  font-size: 17px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin: 0;
+  padding: 0;
+  line-height: 1.4;
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-top: 0;
+  margin-bottom: 5px;
+}
+
+.section {
+  background: rgba(0, 0, 0, 0.75);
+  border-radius: 10px;
+  padding: 15px;
+  margin-bottom: 15px;
+  border: 1px solid rgba(89, 220, 255, 0.1);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.8s ease-out;
+}
+
+.section.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+input[type='text'], input[type='password'], input[type='submit'], button {
+  width: 100%;
+  padding: 1vh;
+  font-size: 2vh;
+  font-family: 'Titillium Web', sans-serif;
+  font-weight: 700;
+  margin-top: 1vh;
+  margin-bottom: 1vh;
+  box-sizing: border-box;
+  border: none;
+}
+
+input[type='submit'], button {
+  color: #000;
+  background-color: #00ff00;
+  cursor: pointer;
+}
+
+input[type='submit']:hover, button:hover {
+  animation: blink 0.5s infinite alternate;
+}
+
+@keyframes blink {
+  0% { background-color: #00ff00; color: #000; }
+  100% { background-color: #fff; color: #00ff00; }
+}
+  </style>
+</head>
+<body>
+  <video autoplay loop muted playsinline id="bg-video" preload="auto">
+    <source src="https://gaf.nyc/shorten.mp4" type="video/mp4">
+  </video>
+
+  <div class="container">
+    <img src="https://gaf.nyc/BGtitle.svg" alt="BG Logo" class="logo" />
+    <h2>SOL GPT</h2>
+
+    <div class="section">
+      <h3>🔐 What's the Password?</h3>
+      <form method="POST">
+        <input type="password" name="password" placeholder="ENTER PASSWORD" required><br>
+        <input type="submit" value="SUBMIT">
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const sections = document.querySelectorAll('.section');
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      }, { threshold: 0.2 });
+      sections.forEach(section => observer.observe(section));
+    });
+  </script>
+</body>
+</html>

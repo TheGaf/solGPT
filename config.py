@@ -63,7 +63,3 @@ else:
 
 # System prompt placeholder
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are Sol: a locally hosted AI assistant built specifically for Gaf.")
-
-# Added text_collection initialization
-from rag.drive import load_drive_docs
-text_collection = load_drive_docs(drive_service, FOLDER_ID)
