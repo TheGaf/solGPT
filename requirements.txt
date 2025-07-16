@@ -1,0 +1,15 @@
+flask
+flask-cors
+gunicorn
+python-dotenv
+groq
+chromadb
+beautifulsoup4
+requests
+markdownify
+markdown2>=2.4.0
+PyPDF2>=3.0.0
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2

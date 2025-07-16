@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SOL AI</title>
+
+  <!-- Google font -->
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap" />
+
+  <link rel="stylesheet" href="https://gaf.nyc/gaf_solstandards.css" />
+
+  <style>
+    .blinking-cursor {
+      font-weight: bold;
+      color: #59DCFF;
+      animation: blink 1s step-start infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0; }
+    }
+    .send-btn {
+      width: 100px;
+      margin-left: auto;
+      display: block;
+    }
+    .input-buttons > input[type="file"] {
+      display: none;
+    }
+    #fileNameDisplay {
+      font-size: 0.9em;
+      color: #ccc;
+      margin-left: 8px;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <img src="https://gaf.nyc/sol_v1.png" alt="SOL AI" class="logo" />
+      <a href="https://gaf.nyc" target="_blank" rel="noopener">
+        <img src="https://gaf.nyc/BGtitle.svg" alt="BG Logo" class="logo" />
+      </a>
+    </div>
+
+    <div class="input-block">
+      <label>
+        <input type="checkbox" id="toggleSources" checked />
+        Show Sources
+      </label>
+    </div>
+
+    <div class="chat-box" id="chat"></div>
+
+    <div class="input-block">
+      <textarea id="inputBox" class="input-text"
+                placeholder="Type your message..." autocomplete="off"></textarea>
+      <div class="input-buttons">
+        <label for="fileUpload" class="upload-btn">+</label>
+        <input type="file" id="fileUpload" name="file" accept="image/*" />
+        <span id="fileNameDisplay"></span>
+        <button class="send-btn" id="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chat            = document.getElementById('chat');
+    const inputBox        = document.getElementById('inputBox');
+    const sendBtn         = document.getElementById('sendBtn');
+    const toggleSrc       = document.getElementById('toggleSources');
+    const fileInput       = document.getElementById('fileUpload');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+
+    fileInput.addEventListener('change', () => {
+      fileNameDisplay.textContent = fileInput.files.length
+        ? fileInput.files[0].name
+        : '';
+    });
+
+    function addMessage(msg, cls, time = null, isHTML = false) {
+      const b = document.createElement('div');
+      b.className = 'bubble ' + cls;
+      if (isHTML) b.innerHTML = msg;
+      else        b.textContent = msg;
+      chat.appendChild(b);
+      if (cls === 'sol' && time) {
+        const t = document.createElement('div');
+        t.className = 'timecode';
+        t.textContent = time;
+        chat.appendChild(t);
+      }
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const text = inputBox.value.trim();
+      const file = fileInput.files[0];
+      if (!text && !file) return;
+
+      // Show user text
+      if (text) addMessage(text, 'user');
+      inputBox.value = '';
+
+      // Preview image if provided
+      if (file && file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          addMessage(
+            `<img src="${e.target.result}" style="max-width:100%; border-radius:6px; margin:6px 0;">`,
+            'user', null, true
+          );
+        };
+        reader.readAsDataURL(file);
+      }
+      fileInput.value = '';
+      fileNameDisplay.textContent = '';
+
+      // Thinking indicator
+      const thinking = document.createElement('div');
+      thinking.className = 'bubble sol';
+      thinking.innerHTML = '<span class="blinking-cursor">&gt; thinking…</span>';
+      chat.appendChild(thinking);
+      chat.scrollTop = chat.scrollHeight;
+
+      // Build fetch options for JSON or multipart
+      let fetchOpts;
+      if (file) {
+        const fd = new FormData();
+        if (text) fd.append('message', text);
+        fd.append('file', file);
+        fd.append('show_sources', toggleSrc.checked);
+        fetchOpts = {
+          method: 'POST',
+          credentials: 'include',
+          body: fd,
+          redirect: 'manual'
+        };
+      } else {
+        fetchOpts = {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: text,
+            show_sources: toggleSrc.checked
+          }),
+          redirect: 'manual'
+        };
+      }
+
+      let res;
+      try {
+        res = await fetch('/chat/api', fetchOpts);
+      } catch (netErr) {
+        console.error('Network error', netErr);
+        thinking.remove();
+        addMessage('⚠️ Could not connect to server.', 'sol');
+        return;
+      }
+
+      const ctype = res.headers.get('Content-Type') || '';
+      if (res.status !== 200 || !ctype.includes('application/json')) {
+        console.warn('Unexpected response:', res.status, ctype);
+        thinking.remove();
+        addMessage('⚠️ Server error. Please refresh the page.', 'sol');
+        return;
+      }
+
+      const payload = await res.json();
+      thinking.remove();
+      if (!res.ok) {
+        console.error('Chat API error', payload);
+        addMessage('⚠️ ' + (payload.error || 'Server error'), 'sol');
+        return;
+      }
+
+      const now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+      const raw = payload.html || payload.reply;
+      const html = payload.html ? raw : marked.parse(raw);
+      addMessage(html, 'sol', now, true);
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    inputBox.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
